@@ -62,22 +62,33 @@ testing.
 
 ## Provisioning the backend
 
-None of this is needed to run the app locally; it is what Phase 3 will deploy
-against.
+None of this is needed to run the app locally — levels 0–5 work with no server
+at all. It is what the transcription-scored levels, baselines and sync need.
 
 ```bash
-cd apps/api
-pnpm exec wrangler d1 create delisp          # paste database_id into wrangler.toml
-pnpm exec wrangler r2 bucket create delisp-audio
-pnpm run migrate:remote                       # applies packages/schema/migrations
-cd ../.. && pnpm content:seed                 # regenerate the seed SQL
-pnpm --filter @delisp/api exec wrangler d1 execute delisp \
-  --file=../../packages/schema/seed/exercises.sql --remote
+pnpm install
+cd apps/api && pnpm exec wrangler login && cd ../..
+./scripts/setup-cloudflare.sh --deploy
 ```
 
-Then put the Access application's team domain and AUD tag into `[vars]` in
-`apps/api/wrangler.toml`. Leaving `ACCESS_AUD` empty disables the check, which is
-how local development runs — do not deploy it that way.
+The script creates the D1 database and R2 bucket if they do not exist, writes
+the database id into `apps/api/wrangler.toml`, applies the migrations, seeds the
+curriculum, creates the Pages project, and (with `--deploy`) publishes the
+Worker. It is safe to re-run; nothing in it deletes data.
+
+Four things it deliberately leaves to you, because each needs a decision it
+cannot make:
+
+1. **Cloudflare Access.** Create a self-hosted application covering the app's
+   hostname, then set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `[vars]` and
+   redeploy. **While `ACCESS_AUD` is empty the Worker skips verification
+   entirely** — that is deliberate so `wrangler dev` and the tests can run, but a
+   deployed Worker with it empty is wide open.
+2. **The Worker route.** Uncomment `routes` in `apps/api/wrangler.toml` so the
+   API sits on the same hostname as the Pages app: one Access policy covers
+   both, and the browser never makes a cross-origin request.
+3. **The two GitHub secrets** below, so CI can deploy the front end.
+4. **Model audio**, once: `pnpm content:voices --base https://<your hostname>`.
 
 ## Deployment
 
