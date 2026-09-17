@@ -8,18 +8,23 @@ decisions the spec left open are recorded in [`DECISIONS.md`](./DECISIONS.md).
 
 ## Status
 
-**Phase 1 — Gauge (no backend).** Mic capture, DSP worklet, calibration,
-sustained-/s/ drill with a live gauge, trial log in IndexedDB. No API, no D1,
-no R2, no Whisper yet — those land in Phase 3.
+**Phase 2 — Curriculum (still no backend).** On top of the Phase 1 gauge: the
+full exercise set, the drill engine, levels 0–4 with automatic progression and
+spaced re-tests, feedback fading, the cue library and the diagnostic module.
+Everything is local — no API, no D1, no R2, no Whisper.
+
+Levels 5–8 are written and waiting: their scoring needs word-level
+transcription, which arrives with the Phase 3 backend.
 
 ## Layout
 
 ```
 apps/web         React + Vite + Tailwind PWA          (Cloudflare Pages)
 packages/dsp     pure-TS audio feature extraction     (unit-tested, no DOM)
+content/         exercises.yaml + the generator that compiles it
 ```
 
-`apps/api`, `packages/schema` and `content/` arrive with Phases 2–3.
+`apps/api` and `packages/schema` arrive with Phase 3.
 
 ## Getting started
 
@@ -27,10 +32,11 @@ Requires Node 20+ and pnpm 10.
 
 ```bash
 pnpm install
-pnpm dev          # web app on http://localhost:5173
-pnpm test         # vitest, packages/dsp
+pnpm dev             # web app on http://localhost:5173
+pnpm test            # vitest: packages/dsp + apps/web
 pnpm typecheck
 pnpm build
+pnpm content:build   # regenerate the exercise module from content/exercises.yaml
 ```
 
 The mic needs a secure context. `localhost` counts; testing from a phone on the

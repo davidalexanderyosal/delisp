@@ -18,6 +18,11 @@ export interface FrameFeatures {
   highBandDb: number;
   /** Energy in the 1–4 kHz band, dBFS-ish. */
   lowBandDb: number;
+  /**
+   * Energy in the voice bar (80–400 Hz), dBFS-ish. Present when the vocal folds
+   * are running, which is what separates /z/ from /s/ at the same placement.
+   */
+  voiceBarDb: number;
 }
 
 export interface FeatureConfig {
@@ -34,6 +39,8 @@ export interface FeatureConfig {
   lowBand: [number, number];
   /** Numerator of `bandRatio`. */
   highBand: [number, number];
+  /** Where voicing shows up as a low-frequency bar. */
+  voiceBand: [number, number];
 }
 
 export const DEFAULT_FFT_SIZE = 2048;
@@ -43,6 +50,7 @@ export const DEFAULT_FEATURE_CONFIG: Omit<FeatureConfig, 'sampleRate'> = {
   analysisBand: [300, 11000],
   lowBand: [1000, 4000],
   highBand: [5000, 8000],
+  voiceBand: [80, 400],
 };
 
 export function featureConfig(sampleRate: number, overrides: Partial<FeatureConfig> = {}): FeatureConfig {
@@ -68,6 +76,7 @@ export class FeatureExtractor {
   private readonly analysisRange: [number, number];
   private readonly lowRange: [number, number];
   private readonly highRange: [number, number];
+  private readonly voiceRange: [number, number];
 
   constructor(config: FeatureConfig) {
     this.config = config;
@@ -86,6 +95,7 @@ export class FeatureExtractor {
     this.analysisRange = range(config.analysisBand);
     this.lowRange = range(config.lowBand);
     this.highRange = range(config.highBand);
+    this.voiceRange = range(config.voiceBand);
   }
 
   /** The window applied before the FFT — exposed for tests. */
@@ -165,6 +175,7 @@ export class FeatureExtractor {
       peakHz: this.interpolatedPeakHz(peakBin),
       highBandDb: highDb,
       lowBandDb: lowDb,
+      voiceBarDb: toDb(this.bandEnergy(this.voiceRange)),
     };
   }
 

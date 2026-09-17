@@ -12,6 +12,7 @@ import {
   saveSettings,
   targetZone,
 } from '../lib/db';
+import { patternLabel } from '../lib/diagnostic';
 import { formatDate, formatHz } from '../lib/progress';
 import { navigate } from '../lib/router';
 
@@ -63,6 +64,16 @@ export function SettingsScreen({
           value={settings.sampleRate ? `${Math.round(settings.sampleRate / 1000)} kHz` : '—'}
         />
         <Stat label="Target" value={formatHz(zoneCentre(zone))} hint="reference /s/" />
+        <Stat
+          label="Pattern"
+          value={patternLabel(settings.lispPattern)}
+          hint={settings.diagnosedAt ? formatDate(settings.diagnosedAt) : 'not diagnosed'}
+        />
+        <Stat
+          label="Feedback"
+          value={`${Math.round(settings.feedbackRate * 100)}%`}
+          hint="score shown per trial"
+        />
       </div>
 
       <Card>
@@ -100,6 +111,9 @@ export function SettingsScreen({
 
       <Button variant="secondary" onClick={() => navigate('/calibrate')}>
         Re-run calibration
+      </Button>
+      <Button variant="secondary" onClick={() => navigate('/diagnostic')}>
+        Re-run the diagnostic
       </Button>
       <Button variant="secondary" onClick={() => void download()}>
         Export data as JSON

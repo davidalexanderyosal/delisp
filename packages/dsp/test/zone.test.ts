@@ -27,7 +27,15 @@ describe('target zone', () => {
 
   it('requires both centroid and band ratio', () => {
     const z = zoneFromCentre(6500, 1500, 5);
-    const base = { rms: 0.1, spread: 900, zcr: 0.4, peakHz: 6400, highBandDb: -20, lowBandDb: -30 };
+    const base = {
+      rms: 0.1,
+      spread: 900,
+      zcr: 0.4,
+      peakHz: 6400,
+      highBandDb: -20,
+      lowBandDb: -30,
+      voiceBarDb: -70,
+    };
     expect(isInZone({ ...base, centroid: 6500, bandRatio: 10 }, z)).toBe(true);
     expect(isInZone({ ...base, centroid: 6500, bandRatio: 1 }, z)).toBe(false);
     expect(isInZone({ ...base, centroid: 4000, bandRatio: 10 }, z)).toBe(false);

@@ -72,6 +72,16 @@ export function silence(length: number, { rms = 0 } = {}): Float32Array {
   return out;
 }
 
+/** Sums signals sample-wise — a voiced fricative is voicing *plus* frication. */
+export function mix(...parts: Float32Array[]): Float32Array {
+  const length = Math.min(...parts.map((p) => p.length));
+  const out = new Float32Array(length);
+  for (const part of parts) {
+    for (let i = 0; i < length; i++) out[i] = out[i]! + part[i]!;
+  }
+  return out;
+}
+
 export function concat(...parts: Float32Array[]): Float32Array {
   const total = parts.reduce((n, p) => n + p.length, 0);
   const out = new Float32Array(total);

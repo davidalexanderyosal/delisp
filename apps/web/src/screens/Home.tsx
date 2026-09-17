@@ -2,23 +2,31 @@ import { useEffect, useState } from 'react';
 import { zoneCentre } from '@delisp/dsp';
 import { Banner, Button, Card, Stat } from '../components/ui';
 import { ScreenShell } from '../components/ScreenShell';
-import { type Settings, isCalibrated, recentTrials, targetZone } from '../lib/db';
-import { formatHz, formatPercent, rollingAccuracy } from '../lib/progress';
+import { type Settings, allProgression, isCalibrated, targetZone } from '../lib/db';
+import { patternLabel } from '../lib/diagnostic';
+import { LEVELS, blockedReason, levelDef } from '../lib/levels';
+import { formatHz, formatPercent } from '../lib/progress';
+import {
+  type ProgressionRow,
+  accuracyOf,
+  activeLevel,
+  dueRetestLevels,
+} from '../lib/progression';
 import { navigate } from '../lib/router';
-import { DRILL } from '../lib/config';
 
 export function Home({ settings }: { settings: Settings }) {
-  const [accuracy, setAccuracy] = useState<{ value: number; total: number } | null>(null);
+  const [rows, setRows] = useState<ProgressionRow[] | null>(null);
 
   useEffect(() => {
-    void recentTrials(0, DRILL.windowSize).then((trials) => {
-      const rolling = rollingAccuracy(trials);
-      setAccuracy({ value: rolling.accuracy, total: rolling.total });
-    });
+    void allProgression().then(setRows);
   }, []);
 
   const calibrated = isCalibrated(settings);
+  const diagnosed = settings.diagnosedAt !== null;
   const zone = targetZone(settings);
+  const level = rows ? activeLevel(rows) : 0;
+  const current = rows?.find((r) => r.level === level) ?? null;
+  const due = rows ? dueRetestLevels(rows, new Date().toISOString()) : [];
 
   return (
     <ScreenShell
@@ -37,38 +45,51 @@ export function Home({ settings }: { settings: Settings }) {
         </button>
       }
     >
-      <p className="text-sm leading-relaxed text-slate-400">
-        Ten minutes, sustained /s/, with the gauge telling you what your ear cannot. Level 0 of the
-        articulation hierarchy.
-      </p>
-
       {!calibrated ? (
         <Banner tone="warn">
           Calibrate first. One second of silence sets the noise floor, then three sustained /s/
           sounds record where you are starting from.
         </Banner>
+      ) : !diagnosed ? (
+        <Banner tone="info">
+          Two quick questions will pick your cue set — a frontal lisp and a lateral one need opposite
+          advice.
+        </Banner>
+      ) : null}
+
+      {due.length > 0 ? (
+        <Banner tone="info">
+          Re-test due for level{due.length > 1 ? 's' : ''} {due.join(', ')} — ten trials are already
+          queued into your next session.
+        </Banner>
       ) : null}
 
       <div className="grid grid-cols-2 gap-3">
+        <Stat
+          label="Now drilling"
+          value={`Level ${level}`}
+          hint={levelDef(level).title}
+        />
+        <Stat
+          label={`Last ${current?.accuracyWindow.length ?? 0}`}
+          value={current && current.accuracyWindow.length > 0 ? formatPercent(accuracyOf(current)) : '—'}
+          hint={`${Math.round(levelDef(level).advanceAt * 100)}% over ${levelDef(level).window} to advance`}
+        />
         <Stat
           label="Target zone"
           value={`${(zone.centroidMin / 1000).toFixed(1)}–${(zone.centroidMax / 1000).toFixed(1)}k`}
           hint={`centre ${formatHz(zoneCentre(zone))}`}
         />
-        <Stat
-          label={`Last ${DRILL.windowSize}`}
-          value={accuracy && accuracy.total > 0 ? formatPercent(accuracy.value) : '—'}
-          hint={accuracy ? `${accuracy.total} trials logged` : 'no trials yet'}
-        />
+        <Stat label="Pattern" value={patternLabel(settings.lispPattern)} hint="cue set" />
       </div>
 
-      <div className="mt-2 flex flex-col gap-3">
+      <div className="flex flex-col gap-3">
         <Button onClick={() => navigate(calibrated ? '/drill' : '/calibrate')}>
-          {calibrated ? 'Start drill' : 'Calibrate'}
+          {calibrated ? 'Start session' : 'Calibrate'}
         </Button>
-        {calibrated ? (
-          <Button variant="secondary" onClick={() => navigate('/calibrate')}>
-            Re-calibrate
+        {calibrated && !diagnosed ? (
+          <Button variant="secondary" onClick={() => navigate('/diagnostic')}>
+            Run the diagnostic
           </Button>
         ) : null}
         <Button variant="secondary" onClick={() => navigate('/history')}>
@@ -76,7 +97,41 @@ export function Home({ settings }: { settings: Settings }) {
         </Button>
       </div>
 
-      <Card className="mt-auto">
+      <Card>
+        <p className="text-sm font-semibold text-slate-200">The hierarchy</p>
+        <ul className="mt-3 flex flex-col gap-2">
+          {LEVELS.map((def) => {
+            const progress = rows?.find((r) => r.level === def.level);
+            const status = progress?.status ?? 'locked';
+            const blocked = blockedReason(def.level);
+            return (
+              <li key={def.level} className="flex items-center gap-3 text-sm">
+                <span
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+                    status === 'passed'
+                      ? 'bg-emerald-500 text-ink-900'
+                      : status === 'active'
+                        ? 'bg-slate-200 text-ink-900'
+                        : 'bg-ink-600 text-slate-500'
+                  }`}
+                >
+                  {def.level}
+                </span>
+                <span className={status === 'locked' ? 'text-slate-600' : 'text-slate-300'}>
+                  {def.title}
+                </span>
+                {blocked ? (
+                  <span className="ml-auto shrink-0 text-xs text-slate-600">Phase 3</span>
+                ) : status === 'passed' ? (
+                  <span className="ml-auto shrink-0 text-xs text-emerald-500">passed</span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </Card>
+
+      <Card>
         <p className="text-xs leading-relaxed text-slate-500">
           The gauge is a proxy, not a diagnosis. It measures where the energy of your /s/ sits, which
           tracks tongue placement closely enough to practise against — but one session with a

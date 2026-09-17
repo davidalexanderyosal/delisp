@@ -3,6 +3,7 @@ import { useMicFeatures } from './lib/audio/useMicFeatures';
 import { type Settings, getSettings } from './lib/db';
 import { useRoute } from './lib/router';
 import { Calibrate } from './screens/Calibrate';
+import { Diagnostic } from './screens/Diagnostic';
 import { Drill } from './screens/Drill';
 import { History } from './screens/History';
 import { Home } from './screens/Home';
@@ -40,6 +41,8 @@ export function App() {
   switch (route) {
     case '/calibrate':
       return <Calibrate mic={mic} settings={settings} onSaved={refresh} />;
+    case '/diagnostic':
+      return <Diagnostic settings={settings} onSaved={refresh} />;
     case '/drill':
       return <Drill mic={mic} settings={settings} />;
     case '/history':

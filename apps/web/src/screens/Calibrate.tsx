@@ -3,6 +3,7 @@ import {
   DEFAULT_GATE_CONFIG,
   DEFAULT_TARGET_ZONE,
   aggregateUtterance,
+  classifySustained,
   median,
   percentile,
 } from '@delisp/dsp';
@@ -121,12 +122,30 @@ export function Calibrate({
 
   const save = async (finished: CalibrationRep[]) => {
     const floor = noiseFloor ?? DEFAULT_GATE_CONFIG.noiseFloor;
+    const medianCentroid = median(finished.map((r) => r.medianCentroid));
+    const medianBandRatio = median(finished.map((r) => r.medianBandRatio));
+    // Read the pattern off the medians across all three reps rather than any one
+    // of them, so a single odd attempt does not decide which cues the user gets.
+    const acousticPattern = classifySustained({
+      frameCount: 0,
+      fricativeFrameCount: finished.length,
+      sDurationMs: median(finished.map((r) => r.sDurationMs)),
+      totalFricativeMs: 0,
+      meanCentroid: medianCentroid,
+      medianCentroid,
+      meanBandRatio: medianBandRatio,
+      medianBandRatio,
+      meanSpread: median(finished.map((r) => r.meanSpread)),
+      medianPeakHz: 0,
+      meanRms: 0,
+    });
     await addCalibration({
       id: newId('cal'),
       createdAt: new Date().toISOString(),
+      acousticPattern,
       noiseFloor: floor,
-      medianCentroid: median(finished.map((r) => r.medianCentroid)),
-      medianBandRatio: median(finished.map((r) => r.medianBandRatio)),
+      medianCentroid,
+      medianBandRatio,
       reps: finished,
       sampleRate,
       deviceLabel: mic.state.deviceLabel,
@@ -240,9 +259,11 @@ export function Calibrate({
             <Stat label="Baseline" value={formatHz(baseline)} hint="your sustained /s/" />
             <Stat label="Target" value={formatHz(settings.targetCentroid ?? defaultZoneCentre())} hint="reference /s/" />
           </div>
-          <Button onClick={() => navigate('/drill')}>Start drill</Button>
-          <Button variant="secondary" onClick={() => navigate('/')}>
-            Back to home
+          <Button onClick={() => navigate('/diagnostic')}>
+            {settings.diagnosedAt ? 'Re-run the diagnostic' : 'Next: which pattern is it?'}
+          </Button>
+          <Button variant="secondary" onClick={() => navigate('/drill')}>
+            Skip to the drill
           </Button>
         </>
       ) : null}

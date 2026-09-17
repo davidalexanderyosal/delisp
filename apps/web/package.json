@@ -4,12 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm run build:worklet && vite",
     "build": "pnpm run build:worklet && vite build",
     "build:worklet": "vite build --config vite.worklet.config.ts",
+    "dev": "pnpm run build:worklet && vite",
+    "icons": "node scripts/make-icons.mjs",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
-    "icons": "node scripts/make-icons.mjs"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit"
   },
   "dependencies": {
     "@delisp/dsp": "workspace:*",
@@ -27,6 +29,7 @@
     "tailwindcss": "3.4.17",
     "typescript": "5.6.3",
     "vite": "5.4.11",
-    "vite-plugin-pwa": "0.21.1"
+    "vite-plugin-pwa": "0.21.1",
+    "vitest": "2.1.8"
   }
 }

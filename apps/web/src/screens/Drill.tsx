@@ -1,51 +1,79 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_GATE_CONFIG,
+  DEFAULT_VOICING_CONFIG,
   type UtteranceFeatures,
   type ZoneScore,
   aggregateUtterance,
   scoreUtterance,
+  voicingRate,
 } from '@delisp/dsp';
 import { Gauge } from '../components/Gauge';
+import { Prompt } from '../components/Prompt';
 import { RecordButton } from '../components/RecordButton';
 import { ScreenShell } from '../components/ScreenShell';
+import { SelfRating } from '../components/SelfRating';
 import { Banner, Button, Card } from '../components/ui';
 import { cuesFor } from '../content/cues';
 import type { MicController } from '../lib/audio/useMicFeatures';
 import { DRILL, HOP_SIZE, MIN_SAMPLE_RATE } from '../lib/config';
 import {
-  type SelfRating,
+  type SelfRating as Rating,
   type Settings,
   type TrialRow,
   addTrial,
+  allProgression,
   createSession,
   endSession,
   newId,
   recentTrials,
+  saveProgression,
+  saveSettings,
   targetZone,
+  unlockNext,
 } from '../lib/db';
-import { feedbackFor } from '../lib/feedback';
-import { formatPercent, rollingAccuracy } from '../lib/progress';
+import { exercisesForLevel, sustainedExercise } from '../lib/exercises';
+import { type FeedbackPlan, feedbackPlanFor, showScoreOnTrial, summariseBlock } from '../lib/fading';
+import { type TrialOutcome, feedbackFor, trialPassed } from '../lib/feedback';
+import { blockedReason, levelDef } from '../lib/levels';
+import { formatPercent } from '../lib/progress';
+import {
+  type PlannedTrial,
+  type ProgressionRow,
+  type SessionPlan,
+  RETEST_PASS,
+  accuracyOf,
+  activeLevel,
+  dueRetestLevels,
+  failRetest,
+  markPassed,
+  passRetest,
+  planSession,
+  progressionTarget,
+  readyToAdvance,
+  recordOutcome,
+} from '../lib/progression';
 import { navigate } from '../lib/router';
 
-const LEVEL = 0;
-const EXERCISE_ID = 'l0-sustained-s';
+type Phase = 'arming' | 'loading' | 'ready' | 'rate' | 'result';
 
-type Phase = 'arming' | 'ready' | 'rate' | 'result';
-
-interface Attempt {
-  score: ZoneScore;
-  utterance: UtteranceFeatures | null;
+interface Attempt extends TrialOutcome {
   durationMs: number;
 }
 
 export function Drill({ mic, settings }: { mic: MicController; settings: Settings }) {
   const [phase, setPhase] = useState<Phase>('arming');
+  const [plan, setPlan] = useState<SessionPlan | null>(null);
+  const [cursor, setCursor] = useState(0);
+  const [rows, setRows] = useState<ProgressionRow[]>([]);
   const [attempt, setAttempt] = useState<Attempt | null>(null);
-  const [rating, setRating] = useState<SelfRating | null>(null);
+  const [rating, setRating] = useState<Rating | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [history, setHistory] = useState<TrialRow[]>([]);
+  const [advanced, setAdvanced] = useState<number | null>(null);
+  const [blockOutcomes, setBlockOutcomes] = useState<boolean[]>([]);
+  const [showScore, setShowScore] = useState(true);
   const sessionId = useRef<string | null>(null);
+  const retestOutcomes = useRef(new Map<number, boolean[]>());
 
   const zone = useMemo(() => targetZone(settings), [settings]);
   const gate = useMemo(
@@ -55,20 +83,49 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
     }),
     [settings.noiseFloor],
   );
+  const voicingCfg = useMemo(() => ({ ...gate, ...DEFAULT_VOICING_CONFIG }), [gate]);
   const sampleRate = mic.state.sampleRate ?? settings.sampleRate ?? 48000;
   const hopMs = (HOP_SIZE / sampleRate) * 1000;
 
-  useEffect(() => {
-    void recentTrials(LEVEL, DRILL.windowSize).then(setHistory);
-  }, []);
+  const level = plan?.level ?? 0;
+  const def = levelDef(level);
+  const row = rows.find((r) => r.level === level);
+  const accuracy = row ? accuracyOf(row) : 0;
+  const feedback: FeedbackPlan = feedbackPlanFor(accuracy);
 
-  // One session row per visit to this screen (spec §4).
+  const current: PlannedTrial | null = plan?.trials[cursor] ?? null;
+
+  // Build the session once the mic is live (spec §3.6: warm-up, re-tests, main).
   useEffect(() => {
     if (mic.state.status !== 'running' || sessionId.current) return;
-    void createSession(LEVEL).then((row) => {
-      sessionId.current = row.id;
-      setPhase((p) => (p === 'arming' ? 'ready' : p));
-    });
+    let cancelled = false;
+    void (async () => {
+      setPhase('loading');
+      const progression = await allProgression();
+      const target = activeLevel(progression);
+      const trialsAtLevel = (await recentTrials(target, 1000)).length;
+      const retests = dueRetestLevels(progression, new Date().toISOString()).filter(
+        (l) => l !== target,
+      );
+      const built = planSession({
+        level: target,
+        trialsAtLevel,
+        pool: exercisesForLevel(target),
+        warmup: sustainedExercise(),
+        retestLevels: retests,
+        retestPool: (l) => exercisesForLevel(l),
+      });
+      const session = await createSession(target);
+      if (cancelled) return;
+      sessionId.current = session.id;
+      setRows(progression);
+      setPlan(built);
+      setCursor(0);
+      setPhase('ready');
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [mic.state.status]);
 
   useEffect(
@@ -77,8 +134,6 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
     },
     [],
   );
-
-  const rolling = rollingAccuracy(history);
 
   const onStop = useCallback(
     (durationMs: number) => {
@@ -90,25 +145,54 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
       const utterance = aggregateUtterance(frames, { hopMs, gate });
       const score = scoreUtterance(frames, zone, gate);
       setNote(null);
-      setAttempt({ score, utterance, durationMs });
+      setAttempt({
+        score,
+        utterance,
+        voicing: voicingRate(frames, voicingCfg),
+        expectVoiced: current?.exercise.sound === 'z',
+        durationMs,
+      });
       setRating(null);
       setPhase('rate');
     },
-    [mic, hopMs, gate, zone],
+    [mic, hopMs, gate, zone, voicingCfg, current],
+  );
+
+  /** Applies the spec §3.7 rule once a re-test block for a level is complete. */
+  const settleRetest = useCallback(
+    async (retestLevel: number, outcomes: boolean[]) => {
+      const planned = plan?.trials.filter(
+        (t) => t.kind === 'retest' && t.exercise.level === retestLevel,
+      ).length;
+      if (!planned || outcomes.length < planned) return;
+      const scored = outcomes.filter(Boolean).length / outcomes.length;
+      const target = rows.find((r) => r.level === retestLevel);
+      if (!target) return;
+      const now = new Date().toISOString();
+      const updated = scored < RETEST_PASS ? failRetest(target, now) : passRetest(target, now);
+      await saveProgression(updated);
+      setRows((prev) => prev.map((r) => (r.level === retestLevel ? updated : r)));
+      setNote(
+        scored < RETEST_PASS
+          ? `Level ${retestLevel} re-test came in at ${formatPercent(scored)} — it will come round again tomorrow.`
+          : `Level ${retestLevel} re-test passed at ${formatPercent(scored)}.`,
+      );
+    },
+    [plan, rows],
   );
 
   const commit = useCallback(
-    async (selfRating: SelfRating) => {
-      if (!attempt || !sessionId.current) return;
+    async (selfRating: Rating) => {
+      if (!attempt || !sessionId.current || !current || !row) return;
       setRating(selfRating);
-      const passed =
-        attempt.score.score >= DRILL.passScore &&
-        attempt.score.fricativeFrames >= DRILL.minFricativeFrames;
-      const row: TrialRow = {
+      const passed = trialPassed(attempt);
+      const trialLevel = current.exercise.level;
+
+      const trial: TrialRow = {
         id: newId('trl'),
         sessionId: sessionId.current,
-        exerciseId: EXERCISE_ID,
-        level: LEVEL,
+        exerciseId: current.exercise.id,
+        level: trialLevel,
         createdAt: new Date().toISOString(),
         centroid: attempt.utterance?.medianCentroid ?? 0,
         bandRatio: attempt.utterance?.meanBandRatio ?? 0,
@@ -119,19 +203,62 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
         selfRating,
         score: attempt.score.score,
         passed: passed ? 1 : 0,
-        feedbackShown: 1,
+        feedbackShown: showScoreOnTrial(feedback, cursor) ? 1 : 0,
         deviceLabel: mic.state.deviceLabel,
         synced: 0,
+        practice: plan?.practice,
+        kind: current.kind,
+        voicing: attempt.voicing,
       };
-      await addTrial(row);
-      setHistory((prev) => [...prev, row].slice(-DRILL.windowSize));
+      await addTrial(trial);
+
+      const target = progressionTarget(current.kind, trialLevel, level);
+      if (target?.mode === 'retest') {
+        const seen = [...(retestOutcomes.current.get(target.level) ?? []), passed];
+        retestOutcomes.current.set(target.level, seen);
+        await settleRetest(target.level, seen);
+      } else if (target?.mode === 'window') {
+        const updated = recordOutcome(row, passed, def);
+        await saveProgression(updated);
+        setRows((prev) => prev.map((r) => (r.level === level ? updated : r)));
+
+        if (readyToAdvance(updated, def) && updated.status !== 'passed') {
+          const now = new Date().toISOString();
+          const done = markPassed(updated, now);
+          await saveProgression(done);
+          await unlockNext(level);
+          setRows((prev) => prev.map((r) => (r.level === level ? done : r)));
+          setAdvanced(level);
+        }
+      }
+
+      setBlockOutcomes((prev) => [...prev, passed]);
+      setShowScore(showScoreOnTrial(feedback, cursor));
       setPhase('result');
     },
-    [attempt, mic.state.deviceLabel],
+    [attempt, current, row, def, level, cursor, feedback, plan, settleRetest, mic.state.deviceLabel],
   );
 
-  const feedback = attempt
-    ? feedbackFor(attempt.score, attempt.utterance, zone, rolling.accuracy)
+  // Keep the stored feedback rate in step with the schedule, for Phase 3 sync.
+  useEffect(() => {
+    if (settings.feedbackRate !== feedback.feedbackRate) {
+      void saveSettings({ feedbackRate: feedback.feedbackRate });
+    }
+  }, [feedback.feedbackRate, settings.feedbackRate]);
+
+  const next = () => {
+    setAttempt(null);
+    setRating(null);
+    if (showScore) setBlockOutcomes([]);
+    setCursor((c) => {
+      const total = plan?.trials.length ?? 0;
+      return total === 0 ? 0 : (c + 1) % total;
+    });
+    setPhase('ready');
+  };
+
+  const outcome = attempt
+    ? feedbackFor(attempt, zone, feedback.kind, current?.exercise)
     : null;
 
   const staticValue =
@@ -139,15 +266,13 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
       ? {
           centroid: attempt.utterance.medianCentroid,
           bandRatio: attempt.utterance.meanBandRatio,
-          inZone: attempt.score.score >= DRILL.passScore,
+          inZone: trialPassed(attempt),
         }
       : null;
 
-  const cues = cuesFor(settings.lispPattern);
-
-  if (mic.state.status !== 'running' && phase === 'arming') {
+  if (mic.state.status !== 'running' && (phase === 'arming' || phase === 'loading')) {
     return (
-      <ScreenShell title="Level 0 · Sustained /s/" back="/">
+      <ScreenShell title="Drill" back="/">
         {mic.state.error ? <Banner tone="error">{mic.state.error}</Banner> : null}
         <Card>
           <h2 className="text-base font-semibold text-slate-100">Enable the microphone</h2>
@@ -163,8 +288,36 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
     );
   }
 
+  if (!plan || !current) {
+    return (
+      <ScreenShell title="Drill" back="/">
+        <p className="text-sm text-slate-500">Building the session…</p>
+      </ScreenShell>
+    );
+  }
+
+  const locked = blockedReason(level);
+  if (locked) {
+    return (
+      <ScreenShell title={`Level ${level} · ${def.title}`} back="/">
+        <Banner tone="info">{locked}</Banner>
+        <Card>
+          <p className="text-sm leading-relaxed text-slate-400">
+            Levels 0–4 are scored acoustically, right here on the phone. From level 5 the score
+            depends on which word was actually heard, which needs the transcription endpoint. The
+            content is already written and waiting.
+          </p>
+        </Card>
+        <Button onClick={() => navigate('/')}>Back to home</Button>
+      </ScreenShell>
+    );
+  }
+
+  const cues = cuesFor(settings.lispPattern);
+  const block = summariseBlock(blockOutcomes);
+
   return (
-    <ScreenShell title="Level 0 · Sustained /s/" back="/">
+    <ScreenShell title={`Level ${level} · ${def.title}`} back="/">
       {mic.state.status === 'paused' ? (
         <Banner tone="warn">
           Paused — the app went to the background.
@@ -179,48 +332,56 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
           this needs. The centroid will read low.
         </Banner>
       ) : null}
-
-      <Card className="py-3">
-        <Gauge
-          zone={zone}
-          {...(phase === 'ready'
-            ? { latest: mic.latest, gate }
-            : { value: staticValue, blind: phase === 'rate' })}
-        />
-      </Card>
-
-      <div className="flex items-center justify-between text-xs text-slate-500">
-        {rolling.total === 0 ? (
-          <span>No trials yet — the first {rolling.windowSize} set the baseline.</span>
-        ) : (
-          <>
-            <span>
-              Last {rolling.total}/{rolling.windowSize}: {formatPercent(rolling.accuracy)} in zone
-            </span>
-            <span>
-              {rolling.passed}/{rolling.total} passed
-            </span>
-          </>
-        )}
-      </div>
-
-      {rolling.readyToAdvance ? (
+      {advanced !== null ? (
         <Banner tone="info">
-          Level 0 criterion met — {formatPercent(rolling.accuracy)} over the last{' '}
-          {rolling.windowSize}. Syllables and words arrive with Phase 2; keep this going as a warm-up
-          until then.
+          Level {advanced} passed at {formatPercent(accuracy)} over {def.window} trials. Level{' '}
+          {advanced + 1} is unlocked — it starts at your next session.
         </Banner>
       ) : null}
+
+      <Prompt exercise={current.exercise} kind={current.kind} />
+
+      {phase === 'ready' && feedback.liveGauge ? (
+        <Card className="py-3">
+          <Gauge zone={zone} latest={mic.latest} gate={gate} />
+        </Card>
+      ) : null}
+      {phase !== 'ready' ? (
+        <Card className="py-3">
+          <Gauge zone={zone} value={staticValue} blind={phase === 'rate' || !showScore} />
+        </Card>
+      ) : null}
+
+      <div className="flex items-center justify-between text-xs text-slate-500">
+        <span>
+          {row && row.accuracyWindow.length > 0
+            ? `Level ${level}: ${formatPercent(accuracy)} over ${row.accuracyWindow.length}/${def.window}`
+            : `No scored trials yet at level ${level}`}
+        </span>
+        <span>
+          {plan.practice} · trial {cursor + 1}
+        </span>
+      </div>
 
       {note ? <Banner tone="warn">{note}</Banner> : null}
 
       {phase === 'ready' ? (
         <>
+          {!feedback.liveGauge ? (
+            <p className="text-xs leading-relaxed text-slate-500">
+              The gauge is hidden while you record — at {formatPercent(accuracy)} you are reliable
+              enough that watching it would become a crutch. It comes back on the result.
+            </p>
+          ) : null}
           <RecordButton
             onStart={mic.beginCapture}
             onStop={onStop}
             disabled={mic.state.status !== 'running'}
+            label={current.exercise.position === 'isolation' ? 'Hold and say “ssss”' : 'Hold and say it'}
           />
+          <p className="text-center text-xs text-slate-500">
+            {levelDef(current.exercise.level).instruction}
+          </p>
           <details className="rounded-2xl bg-ink-800 px-4 py-3">
             <summary className="cursor-pointer select-none text-sm font-semibold text-slate-300">
               Cues
@@ -237,62 +398,53 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
         </>
       ) : null}
 
-      {phase === 'rate' ? (
-        <Card>
-          <h2 className="text-base font-semibold text-slate-100">How did that one feel?</h2>
-          <p className="mt-1 text-sm text-slate-400">
-            Your call first — the score stays hidden until you have committed to one.
-          </p>
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            <Button variant="secondary" onClick={() => void commit('good')}>
-              Good
-            </Button>
-            <Button variant="secondary" onClick={() => void commit('unsure')}>
-              Not sure
-            </Button>
-            <Button variant="secondary" onClick={() => void commit('off')}>
-              Off
-            </Button>
-          </div>
-        </Card>
-      ) : null}
+      {phase === 'rate' ? <SelfRating onRate={(r) => void commit(r)} /> : null}
 
-      {phase === 'result' && feedback ? (
+      {phase === 'result' && outcome ? (
         <>
           <Card>
-            <p
-              className={`text-2xl font-semibold tracking-tight ${
-                feedback.tone === 'good'
-                  ? 'text-zone-good'
-                  : feedback.tone === 'near'
-                    ? 'text-zone-near'
-                    : 'text-zone-off'
-              }`}
-            >
-              {feedback.result}
-            </p>
-            {feedback.coaching ? (
-              <p className="mt-2 text-sm leading-relaxed text-slate-300">{feedback.coaching}</p>
-            ) : null}
-            {rating && feedback.tone !== 'none' ? (
+            {showScore ? (
+              <>
+                <p
+                  className={`text-2xl font-semibold tracking-tight ${
+                    outcome.tone === 'good'
+                      ? 'text-zone-good'
+                      : outcome.tone === 'near'
+                        ? 'text-zone-near'
+                        : 'text-zone-off'
+                  }`}
+                >
+                  {outcome.result}
+                </p>
+                {outcome.coaching ? (
+                  <p className="mt-2 text-sm leading-relaxed text-slate-300">{outcome.coaching}</p>
+                ) : null}
+                {block.trials > 1 ? (
+                  <p className="mt-3 text-xs text-slate-500">
+                    Last {block.trials} trials: {block.passed} in zone ({formatPercent(block.accuracy)}).
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-semibold tracking-tight text-slate-300">Recorded</p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                  Scores are shown every {feedback.scoreEvery} trials now, with a summary after each
+                  block. Trust what the sound felt like.
+                </p>
+              </>
+            )}
+            {rating && showScore && outcome.tone !== 'none' ? (
               <p className="mt-3 text-xs leading-relaxed text-slate-500">
-                {(rating === 'good') === (attempt!.score.score >= DRILL.passScore)
+                {(rating === 'good') === trialPassed(attempt!)
                   ? 'Your rating agreed with the gauge.'
                   : rating === 'good'
-                    ? 'You rated that good; the gauge did not. Trust the gauge for now — that gap is the point of rating first.'
+                    ? 'You rated that good; the gauge did not. That gap is the point of rating first.'
                     : 'You rated that off; the gauge liked it. Your ear may be stricter than it needs to be.'}
               </p>
             ) : null}
           </Card>
-          <Button
-            onClick={() => {
-              setAttempt(null);
-              setRating(null);
-              setPhase('ready');
-            }}
-          >
-            Next
-          </Button>
+          <Button onClick={next}>Next</Button>
           <Button variant="ghost" onClick={() => navigate('/')}>
             End session
           </Button>

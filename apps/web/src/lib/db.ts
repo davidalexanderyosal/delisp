@@ -1,6 +1,14 @@
 import { type DBSchema, type IDBPDatabase, openDB } from 'idb';
-import { DEFAULT_TARGET_ZONE, type TargetZone, zoneCentre, zoneFromCentre } from '@delisp/dsp';
+import {
+  DEFAULT_TARGET_ZONE,
+  type AcousticPattern,
+  type TargetZone,
+  zoneCentre,
+  zoneFromCentre,
+} from '@delisp/dsp';
 import { DEFAULT_TOLERANCE } from './config';
+import { LEVELS, levelDef } from './levels';
+import { type ProgressionRow, activeLevel, newProgression } from './progression';
 
 export type LispPattern = 'frontal' | 'lateral' | 'mixed' | 'unknown';
 export type SelfRating = 'good' | 'unsure' | 'off';
@@ -20,6 +28,7 @@ export interface Settings {
   sampleRate: number | null;
   deviceLabel: string | null;
   calibratedAt: string | null;
+  diagnosedAt: string | null;
   updatedAt: string;
 }
 
@@ -50,6 +59,12 @@ export interface TrialRow {
   feedbackShown: 0 | 1;
   deviceLabel: string | null;
   synced: 0 | 1;
+  /** Blocked or random practice at the time (spec §3.7). */
+  practice?: 'blocked' | 'random';
+  /** Warm-up, main block or spaced re-test. */
+  kind?: 'warmup' | 'main' | 'retest';
+  /** Share of audible frames that looked voiced — the /z/ check. */
+  voicing?: number;
 }
 
 export interface CalibrationRep {
@@ -59,9 +74,22 @@ export interface CalibrationRep {
   sDurationMs: number;
 }
 
+export interface DiagnosticRow {
+  id: string;
+  createdAt: string;
+  /** Acoustic pattern from the sustained /s/ in calibration. */
+  acoustic: string;
+  tongueVisible: boolean | null;
+  airAtCorners: boolean | null;
+  pattern: LispPattern;
+  signalCount: number;
+}
+
 export interface CalibrationRow {
   id: string;
   createdAt: string;
+  /** Tentative pattern read off the sustained /s/ — one of the diagnostic signals. */
+  acousticPattern: AcousticPattern;
   noiseFloor: number;
   medianCentroid: number;
   medianBandRatio: number;
@@ -79,27 +107,38 @@ interface DelispDb extends DBSchema {
     indexes: { 'by-session': string; 'by-createdAt': string };
   };
   calibrations: { key: string; value: CalibrationRow; indexes: { 'by-createdAt': string } };
+  progression: { key: number; value: ProgressionRow };
+  diagnostics: { key: string; value: DiagnosticRow; indexes: { 'by-createdAt': string } };
 }
 
 const DB_NAME = 'delisp';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase<DelispDb>> | null = null;
 
 export function db(): Promise<IDBPDatabase<DelispDb>> {
   dbPromise ??= openDB<DelispDb>(DB_NAME, DB_VERSION, {
-    upgrade(database) {
-      database.createObjectStore('settings', { keyPath: 'id' });
+    upgrade(database, oldVersion) {
+      if (oldVersion < 1) {
+        database.createObjectStore('settings', { keyPath: 'id' });
 
-      const sessions = database.createObjectStore('sessions', { keyPath: 'id' });
-      sessions.createIndex('by-startedAt', 'startedAt');
+        const sessions = database.createObjectStore('sessions', { keyPath: 'id' });
+        sessions.createIndex('by-startedAt', 'startedAt');
 
-      const trials = database.createObjectStore('trials', { keyPath: 'id' });
-      trials.createIndex('by-session', 'sessionId');
-      trials.createIndex('by-createdAt', 'createdAt');
+        const trials = database.createObjectStore('trials', { keyPath: 'id' });
+        trials.createIndex('by-session', 'sessionId');
+        trials.createIndex('by-createdAt', 'createdAt');
 
-      const calibrations = database.createObjectStore('calibrations', { keyPath: 'id' });
-      calibrations.createIndex('by-createdAt', 'createdAt');
+        const calibrations = database.createObjectStore('calibrations', { keyPath: 'id' });
+        calibrations.createIndex('by-createdAt', 'createdAt');
+      }
+
+      if (oldVersion < 2) {
+        // Phase 2: the curriculum needs somewhere to keep level state.
+        database.createObjectStore('progression', { keyPath: 'level' });
+        const diagnostics = database.createObjectStore('diagnostics', { keyPath: 'id' });
+        diagnostics.createIndex('by-createdAt', 'createdAt');
+      }
     },
   });
   return dbPromise;
@@ -117,6 +156,7 @@ export function defaultSettings(): Settings {
     sampleRate: null,
     deviceLabel: null,
     calibratedAt: null,
+    diagnosedAt: null,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -214,14 +254,72 @@ export async function latestCalibration(): Promise<CalibrationRow | null> {
   return rows.at(-1) ?? null;
 }
 
+/**
+ * Progression rows for every level, creating them on first read. Level 0 starts
+ * active; everything above it is locked until the level below is passed.
+ */
+export async function allProgression(): Promise<ProgressionRow[]> {
+  const database = await db();
+  const existing = await database.getAll('progression');
+  const byLevel = new Map(existing.map((row) => [row.level, row]));
+  const rows = LEVELS.map(
+    (def) => byLevel.get(def.level) ?? newProgression(def.level, def.level === 0 ? 'active' : 'locked'),
+  );
+  const missing = rows.filter((row) => !byLevel.has(row.level));
+  if (missing.length > 0) {
+    const tx = database.transaction('progression', 'readwrite');
+    await Promise.all(missing.map((row) => tx.store.put(row)));
+    await tx.done;
+  }
+  return rows;
+}
+
+export async function saveProgression(row: ProgressionRow): Promise<void> {
+  await (await db()).put('progression', row);
+}
+
+/** Unlocks the next level and marks it active. */
+export async function unlockNext(level: number): Promise<void> {
+  const next = LEVELS.find((l) => l.level === level + 1);
+  if (!next) return;
+  const database = await db();
+  const existing = await database.get('progression', next.level);
+  const row = existing ?? newProgression(next.level, 'locked');
+  if (row.status === 'locked') {
+    await database.put('progression', { ...row, status: 'active' });
+  }
+}
+
+export async function currentLevel(): Promise<number> {
+  return activeLevel(await allProgression());
+}
+
+export function windowFor(level: number): number {
+  return levelDef(level).window;
+}
+
+export async function addDiagnostic(row: DiagnosticRow): Promise<void> {
+  await (await db()).put('diagnostics', row);
+}
+
+export async function latestDiagnostic(): Promise<DiagnosticRow | null> {
+  const rows = await (await db()).getAllFromIndex('diagnostics', 'by-createdAt');
+  return rows.at(-1) ?? null;
+}
+
 export async function clearAllData(): Promise<void> {
   const database = await db();
-  const tx = database.transaction(['settings', 'sessions', 'trials', 'calibrations'], 'readwrite');
+  const tx = database.transaction(
+    ['settings', 'sessions', 'trials', 'calibrations', 'progression', 'diagnostics'],
+    'readwrite',
+  );
   await Promise.all([
     tx.objectStore('settings').clear(),
     tx.objectStore('sessions').clear(),
     tx.objectStore('trials').clear(),
     tx.objectStore('calibrations').clear(),
+    tx.objectStore('progression').clear(),
+    tx.objectStore('diagnostics').clear(),
   ]);
   await tx.done;
 }
@@ -235,5 +333,7 @@ export async function exportAll(): Promise<Record<string, unknown>> {
     sessions: await database.getAll('sessions'),
     trials: await database.getAll('trials'),
     calibrations: await database.getAll('calibrations'),
+    progression: await database.getAll('progression'),
+    diagnostics: await database.getAll('diagnostics'),
   };
 }

@@ -19,6 +19,15 @@ export type { GateConfig } from './gate.js';
 export { aggregateUtterance, mean, median, percentile } from './aggregate.js';
 export type { UtteranceFeatures, AggregateOptions } from './aggregate.js';
 export {
+  classifySustained,
+  hasFrication,
+  isVoicedFrame,
+  voicingRate,
+  DEFAULT_CLASSIFY_THRESHOLDS,
+  DEFAULT_VOICING_CONFIG,
+} from './classify.js';
+export type { AcousticPattern, ClassifyThresholds, VoicingConfig } from './classify.js';
+export {
   DEFAULT_TARGET_ZONE,
   DEFAULT_TOLERANCE_HZ,
   zoneFromCentre,
