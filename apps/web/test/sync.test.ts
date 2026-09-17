@@ -83,6 +83,8 @@ function harness({
     postDiagnostic: async () => undefined,
     postRecording: async () => 'key',
     postBaseline: async () => ({ key: 'key', transcript: null, wpm: null, durationMs: null }),
+    modelAudio: async () => [],
+    generateModelAudio: async () => ({ key: 'key', generated: false }),
     baselines: async () => [],
     recordingUrl: (key: string) => `/api/recordings/${key}`,
     scoreAsr: async () => ({ text: '', match: false, reason: 'exact', substitutions: [] }),

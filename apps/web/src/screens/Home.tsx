@@ -133,6 +133,9 @@ export function Home({ settings }: { settings: Settings }) {
             <Button variant="secondary" onClick={() => navigate('/contrasts')}>
               Contrast drill
             </Button>
+            <Button variant="secondary" onClick={() => navigate('/shadow')}>
+              Shadowing
+            </Button>
             <Button variant="secondary" onClick={() => navigate('/baseline')}>
               Weekly baseline
             </Button>

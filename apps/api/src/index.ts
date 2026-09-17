@@ -19,6 +19,7 @@ import {
   purgeExpiredTrialAudio,
   storeRecording,
 } from './recordings';
+import { modelAudioKey, workersAiSynthesiser } from './tts';
 
 type Variables = { identity: AccessIdentity | null };
 
@@ -424,6 +425,54 @@ app.get('/api/baselines', async (c) => {
     .from(recordings)
     .where(eq(recordings.kind, 'baseline'))
     .orderBy(desc(recordings.createdAt));
+  return c.json(rows);
+});
+
+/* ------------------------------------------------------------ model audio */
+
+/**
+ * Synthesises the prompt for one exercise, stores it in R2 and records the key
+ * on the exercise row. Idempotent: the key is derived from the exercise id, so
+ * regenerating replaces the clip rather than accumulating copies.
+ */
+app.post('/api/model-audio', async (c) => {
+  const body = (await c.req.json()) as Record<string, unknown>;
+  const exerciseId = str(body.exerciseId);
+  if (!exerciseId) return c.json({ error: 'exerciseId is required' }, 400);
+
+  const [exercise] = await db(c.env)
+    .select()
+    .from(exercises)
+    .where(eq(exercises.id, exerciseId))
+    .limit(1);
+  if (!exercise) return c.json({ error: `no such exercise: ${exerciseId}` }, 404);
+
+  if (exercise.modelAudioKey && !body.force) {
+    return c.json({ key: exercise.modelAudioKey, generated: false });
+  }
+
+  let audio;
+  try {
+    audio = await workersAiSynthesiser(c.env.AI as unknown as AiLike).speak(exercise.text);
+  } catch (err) {
+    console.error(err);
+    return c.json({ error: 'text-to-speech failed' }, 502);
+  }
+
+  const key = modelAudioKey(exerciseId);
+  await c.env.AUDIO.put(key, audio.bytes, { httpMetadata: { contentType: audio.mime } });
+  await db(c.env).update(exercises).set({ modelAudioKey: key }).where(eq(exercises.id, exerciseId));
+
+  return c.json({ key, generated: true }, 201);
+});
+
+/** The exercises that have a model clip, for the shadowing drill to choose from. */
+app.get('/api/model-audio', async (c) => {
+  const rows = await db(c.env)
+    .select()
+    .from(exercises)
+    .where(sql`${exercises.modelAudioKey} is not null`)
+    .orderBy(exercises.level);
   return c.json(rows);
 });
 

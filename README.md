@@ -23,10 +23,11 @@ was heard, 6–7 by the transcript alone, 8 an unscored baseline. Levels 0–5 w
 with no server at all — the hybrid levels simply fall back to the gauge — so the
 app is fully usable offline. Levels 6–8 need the Worker deployed.
 
-**Phase 4 is partly done.** HVPT-style contrast drilling built from your own
-substitution log, and the speaking-rate band on baselines. Still to come:
-shadowing (which needs model audio) and per-phoneme GOP scoring (which needs a
-Cloudflare Container).
+**Phase 4 is nearly done.** HVPT-style contrast drilling built from your own
+substitution log, the speaking-rate band on baselines, and shadowing with both
+waveforms and a timing comparison. Model audio is generated once with
+`pnpm content:voices --base <your app url>`. Still to come: per-phoneme GOP
+scoring, which needs a Cloudflare Container running wav2vec2.
 
 **Phase 5 is partly done.** Practice streaks, and a full export — the JSON record
 plus the baseline audio, as a ZIP. Session reminders via Web Push are not

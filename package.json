@@ -11,6 +11,7 @@
     "build": "pnpm --filter @delisp/web build",
     "content:build": "node content/build.mjs",
     "content:seed": "node content/seed.mjs > packages/schema/seed/exercises.sql",
+    "content:voices": "node content/voices.mjs",
     "dev": "pnpm --filter @delisp/web dev",
     "test": "pnpm -r test",
     "test:watch": "pnpm --filter @delisp/dsp test:watch",

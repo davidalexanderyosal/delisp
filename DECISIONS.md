@@ -374,3 +374,31 @@ archiver can open it.
 **A baseline that fails to download is noted, not fatal.** A partial archive is
 worth far more than none, and the manifest names exactly what is missing. The
 local JSON exports even with no server at all.
+
+**Model audio is synthesised in the Worker, not by a script with its own
+credentials.** The AI and R2 bindings are already there; a standalone script
+would need Cloudflare credentials and an S3-compatible R2 client for a job that
+runs once per exercise. `pnpm content:voices` walks the curriculum and asks the
+endpoint, so the only thing it needs is the app's URL.
+
+**The model-audio key is derived from the exercise id.** Regenerating replaces
+the clip rather than accumulating copies, and the endpoint skips an exercise that
+already has one unless forced — so the batch script is safe to re-run.
+
+**Levels 0 and 8 get no model clip.** A sustained sound and an open speaking
+prompt are not phrases to copy.
+
+**Shadowing arms the recorder the moment the clip ends.** Repeating immediately
+is the active ingredient; letting the user read the sentence off the screen at
+their leisure would make it a reading exercise.
+
+**Waveform peaks are normalised per clip.** One side is a synthesised clip at a
+fixed level and the other is whatever a phone microphone caught, so absolute
+levels would make the two impossible to compare. What the picture has to support
+is a comparison of timing and shape, which is also why the duration ratio is
+reported in words underneath.
+
+**The native audio element is hidden unless autoplay is refused.** A white
+browser-chrome pill in the middle of a dark screen is the wrong default, but
+removing the control entirely would leave no way to play the clip on a browser
+that blocks programmatic playback.

@@ -10,6 +10,7 @@ import { Drill } from './screens/Drill';
 import { History } from './screens/History';
 import { Home } from './screens/Home';
 import { Progress } from './screens/Progress';
+import { Shadow } from './screens/Shadow';
 import { SettingsScreen } from './screens/Settings';
 
 export function App() {
@@ -31,7 +32,8 @@ export function App() {
     route === '/drill' ||
     route === '/calibrate' ||
     route === '/baseline' ||
-    route === '/contrasts';
+    route === '/contrasts' ||
+    route === '/shadow';
   const { stop } = mic;
   useEffect(() => {
     if (!needsMic) stop();
@@ -60,6 +62,8 @@ export function App() {
       return <Baseline mic={mic} />;
     case '/contrasts':
       return <Contrasts mic={mic} />;
+    case '/shadow':
+      return <Shadow mic={mic} />;
     case '/settings':
       return <SettingsScreen settings={settings} onChanged={refresh} />;
     default:

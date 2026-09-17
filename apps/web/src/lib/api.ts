@@ -61,8 +61,22 @@ export interface BaselineResponse {
   durationMs: number | null;
 }
 
+export interface ModelAudioRow {
+  id: string;
+  level: number;
+  sound: string;
+  position: string | null;
+  text: string;
+  minimalPair: string | null;
+  modelAudioKey: string | null;
+  tags: string | null;
+}
+
 export interface ApiClient {
   health(): Promise<boolean>;
+  /** Exercises that have a synthesised model clip, for shadowing. */
+  modelAudio(): Promise<ModelAudioRow[]>;
+  generateModelAudio(exerciseId: string, force?: boolean): Promise<{ key: string; generated: boolean }>;
   postBaseline(id: string, blob: Blob, durationMs: number): Promise<BaselineResponse>;
   baselines(): Promise<BaselineRow[]>;
   /** Same-origin URL a browser audio element can play. */
@@ -148,6 +162,16 @@ export function httpClient(baseUrl = ''): ApiClient {
         body: blob,
       });
       return (await unwrap(response)) as BaselineResponse;
+    },
+    async modelAudio() {
+      const response = await fetch(url('/api/model-audio'), { credentials: 'same-origin' });
+      return (await unwrap(response)) as ModelAudioRow[];
+    },
+    async generateModelAudio(exerciseId, force = false) {
+      return (await send('/api/model-audio', 'POST', { exerciseId, force })) as {
+        key: string;
+        generated: boolean;
+      };
     },
     async baselines() {
       const response = await fetch(url('/api/baselines'), { credentials: 'same-origin' });
