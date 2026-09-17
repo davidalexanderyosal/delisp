@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "types": ["node"]
+  },
+  "include": ["vite.config.ts", "vite.worklet.config.ts"]
+}
