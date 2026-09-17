@@ -245,6 +245,35 @@ export async function recentTrials(level: number, count: number): Promise<TrialR
   return rows.filter((t) => t.level === level).slice(-count);
 }
 
+/* ------------------------------------------------------------------- sync */
+
+export async function unsyncedSessions(): Promise<SessionRow[]> {
+  const rows = await (await db()).getAll('sessions');
+  return rows.filter((row) => row.synced === 0);
+}
+
+export async function unsyncedTrials(): Promise<TrialRow[]> {
+  const rows = await (await db()).getAll('trials');
+  return rows.filter((row) => row.synced === 0);
+}
+
+async function markSynced(
+  store: 'sessions' | 'trials',
+  ids: readonly string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  const database = await db();
+  const tx = database.transaction(store, 'readwrite');
+  for (const id of ids) {
+    const row = await tx.store.get(id);
+    if (row) await tx.store.put({ ...row, synced: 1 });
+  }
+  await tx.done;
+}
+
+export const markSessionsSynced = (ids: readonly string[]) => markSynced('sessions', ids);
+export const markTrialsSynced = (ids: readonly string[]) => markSynced('trials', ids);
+
 export async function addCalibration(row: CalibrationRow): Promise<void> {
   await (await db()).put('calibrations', row);
 }

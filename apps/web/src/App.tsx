@@ -7,6 +7,7 @@ import { Diagnostic } from './screens/Diagnostic';
 import { Drill } from './screens/Drill';
 import { History } from './screens/History';
 import { Home } from './screens/Home';
+import { Progress } from './screens/Progress';
 import { SettingsScreen } from './screens/Settings';
 
 export function App() {
@@ -47,6 +48,8 @@ export function App() {
       return <Drill mic={mic} settings={settings} />;
     case '/history':
       return <History />;
+    case '/progress':
+      return <Progress />;
     case '/settings':
       return <SettingsScreen settings={settings} onChanged={refresh} />;
     default:

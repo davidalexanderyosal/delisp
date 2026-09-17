@@ -92,6 +92,9 @@ export function Home({ settings }: { settings: Settings }) {
             Run the diagnostic
           </Button>
         ) : null}
+        <Button variant="secondary" onClick={() => navigate('/progress')}>
+          Progress
+        </Button>
         <Button variant="secondary" onClick={() => navigate('/history')}>
           History
         </Button>

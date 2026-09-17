@@ -63,6 +63,12 @@ export function formatHz(hz: number | null): string {
   return hz >= 1000 ? `${(hz / 1000).toFixed(2)} kHz` : `${Math.round(hz)} Hz`;
 }
 
+/** Same number, no unit word — for the narrow three-up stat tiles. */
+export function formatHzCompact(hz: number | null): string {
+  if (hz === null || !Number.isFinite(hz)) return '—';
+  return hz >= 1000 ? `${(hz / 1000).toFixed(2)}k` : `${Math.round(hz)}`;
+}
+
 export function formatPercent(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return '—';
   return `${Math.round(value * 100)}%`;

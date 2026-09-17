@@ -255,3 +255,38 @@ whereas a row with no object is noticed the next time anything reads it.
 **Per-test storage isolation is off in the API tests.** The pool's isolation
 cannot unwind the R2 bucket's backing store in this environment; each suite
 clears what it wrote instead.
+
+**The sync worker pushes sessions before trials, and marks nothing synced until
+the server acknowledges it.** Trials carry a foreign key to their session, so the
+order is a correctness requirement rather than a preference; a trial whose session
+failed to push is held back for the next flush instead of being rejected. Because
+nothing is marked early, an interrupted flush retries — which is why the server's
+`POST /api/trials` is idempotent.
+
+**A failed trial batch stops the flush rather than continuing.** The remaining
+batches are almost certainly going to fail the same way, and retrying them now
+would multiply the noise without changing the outcome.
+
+**Charts are hand-rolled SVG.** The spec's "no external UI kits, Tailwind only"
+rules out a charting library, and the three views in §3.10 are a line, a
+histogram overlay and a stat tile.
+
+**The two-series chart palette is validated, not chosen by eye.** Emerald-600
+(#059669) against fuchsia-600 (#c026d3) on the dark card surface separate by
+ΔE 17.2 under deuteranopia and 26.6 under tritanopia. The app's own emerald and
+rose are status colours (in zone / off), so the chart series deliberately do not
+reuse them, and both series carry a legend and direct labels so identity never
+rests on colour alone.
+
+**The week-over-week histogram plots share, not count.** Two weeks rarely contain
+the same number of trials, and comparing raw counts would read a longer session as
+progress.
+
+**The centroid distribution counts only the sustained /s/ prompt.** Centroid
+depends on the vowel context around the /s/, so comparing a week of sustained /s/
+against a week of words would measure the curriculum rather than the speaker.
+
+**"Not sure" is excluded from self-rating agreement.** It is not a claim that can
+be right or wrong; counting it would dilute the number that matters. Over- and
+under-confidence are reported separately, because they call for opposite
+responses.
