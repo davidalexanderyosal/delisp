@@ -113,6 +113,7 @@ export function Diagnostic({
             </div>
           </Card>
           <Button
+            variant="secondary"
             onClick={() => {
               setTongueVisible(true);
               setStep('straw');
@@ -161,7 +162,9 @@ export function Diagnostic({
           <Button variant="secondary" onClick={() => void finish(false)}>
             Mostly through the centre
           </Button>
-          <Button onClick={() => void finish(true)}>Mostly at the corners</Button>
+          <Button variant="secondary" onClick={() => void finish(true)}>
+            Mostly at the corners
+          </Button>
         </>
       ) : null}
 
