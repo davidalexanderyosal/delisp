@@ -2,9 +2,19 @@ import { useEffect, useState } from 'react';
 import { zoneCentre } from '@delisp/dsp';
 import { Banner, Button, Card, Stat } from '../components/ui';
 import { ScreenShell } from '../components/ScreenShell';
-import { type Settings, allProgression, isCalibrated, targetZone } from '../lib/db';
+import {
+  type SessionRow,
+  type Settings,
+  type TrialRow,
+  allProgression,
+  allTrials,
+  isCalibrated,
+  listSessions,
+  targetZone,
+} from '../lib/db';
 import { patternLabel } from '../lib/diagnostic';
 import { LEVELS, blockedReason, levelDef } from '../lib/levels';
+import { type Streak, computeStreak, describeStreak } from '../lib/streak';
 import { useApiStatus } from '../lib/useApiStatus';
 import { formatHz, formatPercent } from '../lib/progress';
 import {
@@ -17,10 +27,15 @@ import { navigate } from '../lib/router';
 
 export function Home({ settings }: { settings: Settings }) {
   const [rows, setRows] = useState<ProgressionRow[] | null>(null);
+  const [streak, setStreak] = useState<Streak | null>(null);
   const api = useApiStatus();
 
   useEffect(() => {
     void allProgression().then(setRows);
+    void Promise.all([listSessions(), allTrials()]).then(
+      ([sessions, trials]: [SessionRow[], TrialRow[]]) =>
+        setStreak(computeStreak(sessions, trials)),
+    );
   }, []);
 
   const calibrated = isCalibrated(settings);
@@ -59,6 +74,12 @@ export function Home({ settings }: { settings: Settings }) {
         </Banner>
       ) : null}
 
+      {streak && streak.atRisk ? (
+        <Banner tone="warn">
+          {streak.current}-day streak — one session today keeps it.
+        </Banner>
+      ) : null}
+
       {due.length > 0 ? (
         <Banner tone="info">
           Re-test due for level{due.length > 1 ? 's' : ''} {due.join(', ')} — ten trials are already
@@ -83,6 +104,16 @@ export function Home({ settings }: { settings: Settings }) {
           hint={`centre ${formatHz(zoneCentre(zone))}`}
         />
         <Stat label="Pattern" value={patternLabel(settings.lispPattern)} hint="cue set" />
+        <Stat
+          label="Streak"
+          value={streak ? streak.current : '—'}
+          hint={streak ? describeStreak(streak) : 'days in a row'}
+        />
+        <Stat
+          label="Days practised"
+          value={streak ? streak.totalDays : '—'}
+          hint={streak && streak.longest > 0 ? `best run ${streak.longest}` : 'ever'}
+        />
       </div>
 
       <div className="flex flex-col gap-3">

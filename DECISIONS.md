@@ -349,3 +349,28 @@ says "a band, not a maximum". Rushing is where a lisp reappears first, but
 slowing down to place every /s/ deliberately produces careful speech that does
 not transfer to conversation — so both ends are called out. Anything under ten
 seconds is refused rather than extrapolated.
+
+## Phase 5
+
+**A streak day needs a scored trial, not an opened session.** Starting the app
+and putting it down should not extend a streak, or the number stops meaning
+anything.
+
+**Streak days are local, not UTC.** Practising at 11pm in Singapore is a
+different day from the one UTC thinks it is, and a streak that broke because of
+a timezone would be indefensible.
+
+**A streak survives until the end of the following day.** It breaks when a whole
+day passes with nothing, not at midnight — so "practise today to keep it" is a
+warning rather than an epitaph. A trial is credited to its own day, so a session
+that runs past midnight counts for both.
+
+**The export archive is store-only ZIP, hand-written.** The payload is already
+compressed audio, so deflate would spend time to save nothing, and a stored
+archive is a few dozen lines rather than a compression implementation. Verified
+against Python's `zipfile` — structure assertions alone would not prove a real
+archiver can open it.
+
+**A baseline that fails to download is noted, not fatal.** A partial archive is
+worth far more than none, and the manifest names exactly what is missing. The
+local JSON exports even with no server at all.

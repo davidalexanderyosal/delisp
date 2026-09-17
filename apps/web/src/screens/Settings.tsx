@@ -13,6 +13,8 @@ import {
   targetZone,
 } from '../lib/db';
 import { patternLabel } from '../lib/diagnostic';
+import { httpClient } from '../lib/api';
+import { apiExportOptions, archiveName, buildExportArchive, saveBlob } from '../lib/exportArchive';
 import { formatDate, formatHz } from '../lib/progress';
 import { navigate } from '../lib/router';
 
@@ -25,6 +27,7 @@ export function SettingsScreen({
 }) {
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [archiving, setArchiving] = useState<string | null>(null);
   const zone = targetZone(settings);
 
   const setTolerance = async (value: number) => {
@@ -35,13 +38,34 @@ export function SettingsScreen({
   const download = async () => {
     const data = await exportAll();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `delisp-export-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    saveBlob(blob, `delisp-export-${new Date().toISOString().slice(0, 10)}.json`);
     setNote('Exported every session, trial and calibration as JSON.');
+  };
+
+  /**
+   * The full archive: the JSON record plus the baseline audio, which is the one
+   * thing here that cannot be regenerated.
+   */
+  const downloadArchive = async () => {
+    setNote(null);
+    setArchiving('Preparing…');
+    try {
+      const result = await buildExportArchive({
+        ...apiExportOptions(httpClient()),
+        onProgress: (done, total) =>
+          setArchiving(total === 0 ? 'Preparing…' : `Fetching baselines ${done}/${total}…`),
+      });
+      saveBlob(result.blob, archiveName());
+      setNote(
+        result.baselinesFailed.length > 0
+          ? `Exported with ${result.baselinesIncluded} baselines; ${result.baselinesFailed.length} could not be fetched and are listed in the manifest.`
+          : `Exported everything, including ${result.baselinesIncluded} baseline recordings.`,
+      );
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Export failed.');
+    } finally {
+      setArchiving(null);
+    }
   };
 
   return (
@@ -117,6 +141,9 @@ export function SettingsScreen({
       </Button>
       <Button variant="secondary" onClick={() => void download()}>
         Export data as JSON
+      </Button>
+      <Button variant="secondary" onClick={() => void downloadArchive()} disabled={archiving !== null}>
+        {archiving ?? 'Export everything (JSON + baseline audio)'}
       </Button>
 
       {confirmingReset ? (

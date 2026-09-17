@@ -26,7 +26,11 @@ app is fully usable offline. Levels 6–8 need the Worker deployed.
 **Phase 4 is partly done.** HVPT-style contrast drilling built from your own
 substitution log, and the speaking-rate band on baselines. Still to come:
 shadowing (which needs model audio) and per-phoneme GOP scoring (which needs a
-Cloudflare Container). Phase 5 — streaks, reminders, export — is not started.
+Cloudflare Container).
+
+**Phase 5 is partly done.** Practice streaks, and a full export — the JSON record
+plus the baseline audio, as a ZIP. Session reminders via Web Push are not
+started.
 
 ## Layout
 
