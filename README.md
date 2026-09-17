@@ -8,23 +8,27 @@ decisions the spec left open are recorded in [`DECISIONS.md`](./DECISIONS.md).
 
 ## Status
 
-**Phase 2 — Curriculum (still no backend).** On top of the Phase 1 gauge: the
-full exercise set, the drill engine, levels 0–4 with automatic progression and
-spaced re-tests, feedback fading, the cue library and the diagnostic module.
-Everything is local — no API, no D1, no R2, no Whisper.
+**Phases 1–2 are complete.** The app works standalone: mic capture, calibration,
+the diagnostic, levels 0–4 with automatic progression, spaced re-tests, feedback
+fading and the cue library, all stored locally in IndexedDB.
 
-Levels 5–8 are written and waiting: their scoring needs word-level
-transcription, which arrives with the Phase 3 backend.
+**Phase 3 is in progress.** The D1 schema, its migrations and the Hono Worker
+are built and tested against real D1 in workerd. Still to come: R2 uploads,
+Whisper scoring (which unlocks levels 5–7), the IndexedDB → D1 sync worker,
+weekly baselines and the progress dashboard.
+
+The app does not talk to the API yet — it remains local-only until the sync
+layer lands.
 
 ## Layout
 
 ```
 apps/web         React + Vite + Tailwind PWA          (Cloudflare Pages)
+apps/api         Hono Worker                          (Cloudflare Workers)
 packages/dsp     pure-TS audio feature extraction     (unit-tested, no DOM)
-content/         exercises.yaml + the generator that compiles it
+packages/schema  Drizzle schema + D1 migrations
+content/         exercises.yaml, its compiler and the D1 seed generator
 ```
-
-`apps/api` and `packages/schema` arrive with Phase 3.
 
 ## Getting started
 
@@ -42,6 +46,25 @@ pnpm content:build   # regenerate the exercise module from content/exercises.yam
 The mic needs a secure context. `localhost` counts; testing from a phone on the
 same network does not, so use a tunnel (or the deployed Pages URL) for on-device
 testing.
+
+## Provisioning the backend
+
+None of this is needed to run the app locally; it is what Phase 3 will deploy
+against.
+
+```bash
+cd apps/api
+pnpm exec wrangler d1 create delisp          # paste database_id into wrangler.toml
+pnpm exec wrangler r2 bucket create delisp-audio
+pnpm run migrate:remote                       # applies packages/schema/migrations
+cd ../.. && pnpm content:seed                 # regenerate the seed SQL
+pnpm --filter @delisp/api exec wrangler d1 execute delisp \
+  --file=../../packages/schema/seed/exercises.sql --remote
+```
+
+Then put the Access application's team domain and AUD tag into `[vars]` in
+`apps/api/wrangler.toml`. Leaving `ACCESS_AUD` empty disables the check, which is
+how local development runs — do not deploy it that way.
 
 ## Deployment
 

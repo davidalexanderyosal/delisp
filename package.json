@@ -8,12 +8,13 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "pnpm --filter @delisp/web dev",
     "build": "pnpm --filter @delisp/web build",
-    "typecheck": "pnpm -r typecheck",
+    "content:build": "node content/build.mjs",
+    "content:seed": "node content/seed.mjs > packages/schema/seed/exercises.sql",
+    "dev": "pnpm --filter @delisp/web dev",
     "test": "pnpm -r test",
     "test:watch": "pnpm --filter @delisp/dsp test:watch",
-    "content:build": "node content/build.mjs"
+    "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
     "typescript": "5.6.3",
@@ -21,7 +22,9 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild"
+      "esbuild",
+      "sharp",
+      "workerd"
     ]
   }
 }

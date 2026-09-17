@@ -171,3 +171,42 @@ accuracy, hidden during recording from 70%, scored every 2nd trial from 80% and
 every 3rd from 85%, with a block summary in between and the knowledge-of-
 performance coaching line dropping away at 80%. `settings.feedback_rate` is kept
 in step for Phase 3 sync.
+
+## Phase 3 (in progress)
+
+**Access is verified in the Worker, not assumed.** Cloudflare Access terminates
+authentication at the edge, but a Worker that simply trusts the
+`Cf-Access-Jwt-Assertion` header trusts anything that can reach its route. The
+Worker checks the RS256 signature against the team's published keys and — the
+part that actually matters — that the `aud` claim names *this* application, so a
+token minted for another app on the same team cannot be replayed here. Written
+against WebCrypto rather than a JWT library: it is one signature check and a
+handful of claims.
+
+**An empty `ACCESS_AUD` disables verification.** The binding does not exist under
+`wrangler dev` or in tests, and refusing to start would make the API
+undevelopable. The README says plainly not to deploy it that way.
+
+**`alg` is checked against an allow-list of one.** `alg: "none"` and symmetric
+algorithms are the two classic JWT verification bypasses; RS256 is the only thing
+Access issues, so anything else is rejected before a key is even fetched. Both
+cases are unit-tested against tokens this test suite actually forges.
+
+**`POST /api/trials` is idempotent.** The client computes features offline and
+flushes on reconnect, so a partly-failed flush *will* be retried with the same
+ids. Inserts use `ON CONFLICT DO NOTHING` and the session's `trial_count` is
+recomputed from the rows rather than incremented, so a retry cannot inflate it.
+
+**Test bindings are declared in `vitest.config.ts`, not read from
+`wrangler.toml`.** The Workers AI binding is a proxy to a remote service and
+cannot be instantiated in the isolated test runtime — loading the real config
+makes workerd fail to start. Everything else runs against genuine D1 and R2.
+
+**Migrations live in `packages/schema` and are pointed at from
+`apps/api/wrangler.toml`.** One schema definition, one set of migrations, used by
+both the Worker and the test runner.
+
+**The seed is generated SQL, not a script that talks to D1.** `content/seed.mjs`
+emits an upsert file from the same YAML the web app compiles from, so the
+curriculum has exactly one source of truth and seeding is a reviewable artifact
+rather than an opaque command.

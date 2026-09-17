@@ -1,0 +1,31 @@
+name = "delisp-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-18"
+compatibility_flags = ["nodejs_compat"]
+
+# Routed on the same hostname as the Pages app, so Cloudflare Access covers both
+# with one policy and the browser never makes a cross-origin request.
+# routes = [{ pattern = "speech.example.com/api/*", zone_name = "example.com" }]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "delisp"
+# Filled in by `wrangler d1 create delisp`.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../packages/schema/migrations"
+
+[[r2_buckets]]
+binding = "AUDIO"
+bucket_name = "delisp-audio"
+
+[ai]
+binding = "AI"
+
+[vars]
+# Cloudflare Access team domain, e.g. "yourteam.cloudflareaccess.com".
+ACCESS_TEAM_DOMAIN = ""
+# The Access application's AUD tag. Empty disables verification for local dev.
+ACCESS_AUD = ""
+
+[observability]
+enabled = true
