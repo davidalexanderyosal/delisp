@@ -65,6 +65,12 @@ export interface TrialRow {
   kind?: 'warmup' | 'main' | 'retest';
   /** Share of audible frames that looked voiced — the /z/ check. */
   voicing?: number;
+  /** What the transcript said, on levels judged by transcription. */
+  asrText?: string | null;
+  /** 1 / 0 / null when transcription did not run. */
+  asrMatch?: 0 | 1 | null;
+  /** R2 key, when the clip was kept (spec §4 retention). */
+  recordingKey?: string | null;
 }
 
 export interface CalibrationRep {

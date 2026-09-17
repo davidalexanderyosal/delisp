@@ -12,15 +12,19 @@ decisions the spec left open are recorded in [`DECISIONS.md`](./DECISIONS.md).
 the diagnostic, levels 0–4 with automatic progression, spaced re-tests, feedback
 fading and the cue library, all stored locally in IndexedDB.
 
-**Phase 3 is nearly complete.** The backend is built and tested: D1 schema and
-migrations, the Hono Worker, Cloudflare Access verification, R2 audio storage,
-Whisper scoring with a sibilant-aware transcript matcher, weekly baselines and a
-nightly retention sweep. On the client: the API client, the IndexedDB → D1 sync
-worker, and the progress dashboard (spec §3.10).
+**Phase 3 is complete.** Backend: D1 schema and migrations, the Hono Worker,
+Cloudflare Access verification, R2 audio storage, Whisper scoring with a
+sibilant-aware transcript matcher, weekly baselines and a nightly retention
+sweep. Client: the API client, the IndexedDB → D1 sync worker, browser recording,
+the progress dashboard and the weekly baseline flow.
 
-One piece remains: recording audio in the browser and posting it for scoring,
-which is what unlocks levels 5–7. Until then the app drills levels 0–4 entirely
-offline and syncing is opt-in from the Progress screen.
+Scoring by level (spec §3.6): 0–2 by the gauge alone, 3–5 by the gauge *and* what
+was heard, 6–7 by the transcript alone, 8 an unscored baseline. Levels 0–5 work
+with no server at all — the hybrid levels simply fall back to the gauge — so the
+app is fully usable offline. Levels 6–8 need the Worker deployed.
+
+Phases 4 (shadowing, HVPT, phoneme GOP) and 5 (streaks, reminders, export) are
+not started.
 
 ## Layout
 

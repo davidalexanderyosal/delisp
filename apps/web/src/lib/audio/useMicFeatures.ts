@@ -1,5 +1,6 @@
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { MIN_SAMPLE_RATE } from '../config';
+import { pickMimeType } from '../recording';
 import {
   FEATURE_PROCESSOR,
   FEATURE_WORKLET_PATH,
@@ -33,8 +34,14 @@ export interface MicController {
   /** Must be called from inside a tap handler — iOS will not resume otherwise. */
   start: () => Promise<void>;
   stop: () => void;
-  beginCapture: () => void;
+  /** Pass `record` to also capture the audio itself, for transcription. */
+  beginCapture: (record?: boolean) => void;
   endCapture: () => TimedFrame[];
+  /**
+   * The clip from the capture that just ended, or null when none was recorded.
+   * Resolves once MediaRecorder has flushed, which is not immediate.
+   */
+  takeRecording: () => Promise<Blob | null>;
   capturing: boolean;
 }
 
@@ -79,9 +86,21 @@ export function useMicFeatures(): MicController {
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const capturingRef = useRef(false);
   const bufferRef = useRef<TimedFrame[]>([]);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const recordingRef = useRef<Promise<Blob | null> | null>(null);
 
   const teardown = useCallback(() => {
     capturingRef.current = false;
+    if (recorderRef.current?.state === 'recording') {
+      try {
+        recorderRef.current.stop();
+      } catch {
+        // Already stopping; nothing to do.
+      }
+    }
+    recorderRef.current = null;
+    recordingRef.current = null;
     nodeRef.current?.port.close();
     nodeRef.current?.disconnect();
     sourceRef.current?.disconnect();
@@ -195,18 +214,55 @@ export function useMicFeatures(): MicController {
     }
   }, [teardown]);
 
-  const beginCapture = useCallback(() => {
+  const beginCapture = useCallback((record = false) => {
     bufferRef.current = [];
     capturingRef.current = true;
     setCapturing(true);
+    recordingRef.current = null;
+
+    const stream = streamRef.current;
+    if (!record || !stream || typeof MediaRecorder === 'undefined') return;
+
+    // MediaRecorder runs alongside the worklet on the same stream (spec §3.1):
+    // the features are computed regardless, and the clip is only for the levels
+    // that need transcribing.
+    try {
+      const mimeType = pickMimeType((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      chunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+      recordingRef.current = new Promise<Blob | null>((resolve) => {
+        recorder.onstop = () => {
+          const type = recorder.mimeType || mimeType || 'audio/webm';
+          resolve(chunksRef.current.length === 0 ? null : new Blob(chunksRef.current, { type }));
+        };
+        recorder.onerror = () => resolve(null);
+      });
+      recorder.start();
+      recorderRef.current = recorder;
+    } catch {
+      // A browser that refuses to record still gets the gauge; the level that
+      // needed the clip will report that it could not be scored.
+      recordingRef.current = null;
+    }
   }, []);
 
   const endCapture = useCallback((): TimedFrame[] => {
     capturingRef.current = false;
     setCapturing(false);
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+    recorderRef.current = null;
     const frames = bufferRef.current;
     bufferRef.current = [];
     return frames;
+  }, []);
+
+  const takeRecording = useCallback((): Promise<Blob | null> => {
+    const pending = recordingRef.current;
+    recordingRef.current = null;
+    return pending ?? Promise.resolve(null);
   }, []);
 
   // Foreground only (spec §3.1): a backgrounded tab gets throttled or killed
@@ -228,5 +284,5 @@ export function useMicFeatures(): MicController {
 
   useEffect(() => teardown, [teardown]);
 
-  return { state, latest, start, stop, beginCapture, endCapture, capturing };
+  return { state, latest, start, stop, beginCapture, endCapture, takeRecording, capturing };
 }

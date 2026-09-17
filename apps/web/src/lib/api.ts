@@ -44,8 +44,29 @@ export interface ProgressResponse {
   selfRating: { rated: number; agreed: number };
 }
 
+export interface BaselineRow {
+  key: string;
+  kind: string;
+  mime: string;
+  durationMs: number | null;
+  createdAt: string;
+  transcript: string | null;
+  wpm: number | null;
+}
+
+export interface BaselineResponse {
+  key: string;
+  transcript: string | null;
+  wpm: number | null;
+  durationMs: number | null;
+}
+
 export interface ApiClient {
   health(): Promise<boolean>;
+  postBaseline(id: string, blob: Blob, durationMs: number): Promise<BaselineResponse>;
+  baselines(): Promise<BaselineRow[]>;
+  /** Same-origin URL a browser audio element can play. */
+  recordingUrl(key: string): string;
   putSettings(settings: Settings): Promise<void>;
   postSession(session: SessionPayload): Promise<void>;
   postTrials(trials: readonly TrialRow[]): Promise<void>;
@@ -117,6 +138,23 @@ export function httpClient(baseUrl = ''): ApiClient {
     },
     async postDiagnostic(row) {
       await send('/api/diagnostics', 'POST', row);
+    },
+    async postBaseline(id, blob, durationMs) {
+      const query = new URLSearchParams({ id, durationMs: String(Math.round(durationMs)) });
+      const response = await fetch(url(`/api/baseline?${query.toString()}`), {
+        method: 'POST',
+        headers: { 'content-type': blob.type || 'application/octet-stream' },
+        credentials: 'same-origin',
+        body: blob,
+      });
+      return (await unwrap(response)) as BaselineResponse;
+    },
+    async baselines() {
+      const response = await fetch(url('/api/baselines'), { credentials: 'same-origin' });
+      return (await unwrap(response)) as BaselineRow[];
+    },
+    recordingUrl(key) {
+      return url(`/api/recordings/${key}`);
     },
     async postRecording(kind, id, blob, durationMs) {
       const query = new URLSearchParams({ kind, id, durationMs: String(Math.round(durationMs)) });

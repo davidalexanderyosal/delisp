@@ -290,3 +290,37 @@ against a week of words would measure the curriculum rather than the speaker.
 be right or wrong; counting it would dilute the number that matters. Over- and
 under-confidence are reported separately, because they call for opposite
 responses.
+
+**Levels 3–5 are hybrid, not transcription-only.** Spec §3.6 puts them on
+"acoustic score + Whisper match", which Phase 2 had simplified to a hard cut at
+level 5. Corrected: 0–2 acoustic, 3–5 hybrid, 6–7 transcript-only, 8 baseline.
+
+**A hybrid level falls back to the gauge when transcription does not run.**
+Offline, a failed upload, a browser that will not record — all yield "not
+scored" rather than a failed trial. Marking a good attempt wrong because the
+network was down would teach the opposite of what the drill is for. A
+transcript-only level has nothing to fall back to, so it stays locked without a
+reachable server and says so.
+
+**A wrong word outranks the gauge in the feedback.** When the transcript comes
+back as a different word, reporting the placement percentage first would bury
+the thing that actually went wrong.
+
+**The upload and transcription overlap with the self-rating.** The user has to
+commit to a rating before the score is revealed anyway, so the network round trip
+costs nothing; the result screen waits on it only if it is still in flight.
+
+**The result screen keeps the fading plan that judged the trial.** Committing a
+trial changes the rolling accuracy and therefore the schedule, so reading the
+live plan when rendering the result described a rule that was not the one
+applied — the card claimed "scores every 1 trials" while hiding the score.
+Caught by looking at a screenshot.
+
+**The health probe is shared across mounts with a 30-second TTL.** Home, Drill
+and Baseline all ask; probing per mount put a request behind every screen change
+for an answer that does not change that fast.
+
+**Clips are uploaded on the sampling schedule *or* when the level needs one.**
+Spec §4's "every 5th trial plus all failed trials, capped at 20/session" governs
+the archive; a level scored by transcription has no score at all without its
+clip, so it bypasses the sampling but still respects the cap.

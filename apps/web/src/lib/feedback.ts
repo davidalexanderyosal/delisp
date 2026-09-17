@@ -2,6 +2,7 @@ import type { TargetZone, UtteranceFeatures, ZoneScore } from '@delisp/dsp';
 import { zoneCentre } from '@delisp/dsp';
 import { DRILL } from './config';
 import type { Exercise } from './exercises';
+import type { Scoring } from './levels';
 
 export interface Feedback {
   /** Knowledge of results — the number (spec §3.8). */
@@ -18,6 +19,12 @@ export interface TrialOutcome {
   voicing: number;
   /** True for a /z/ prompt. */
   expectVoiced: boolean;
+  /** How this level is judged (spec §3.6). */
+  scoring: Scoring;
+  /** Whether the transcript matched. `null` when transcription did not run. */
+  asrMatch?: boolean | null;
+  /** What was heard, when transcription ran. */
+  asrText?: string | null;
 }
 
 const NEAR_HZ = 700;
@@ -28,12 +35,34 @@ export function voicingOk(outcome: TrialOutcome): boolean {
   return outcome.expectVoiced ? outcome.voicing >= VOICING_THRESHOLD : outcome.voicing < VOICING_THRESHOLD;
 }
 
-export function trialPassed(outcome: TrialOutcome): boolean {
+function acousticPassed(outcome: TrialOutcome): boolean {
   return (
     outcome.score.score >= DRILL.passScore &&
     outcome.score.fricativeFrames >= DRILL.minFricativeFrames &&
     voicingOk(outcome)
   );
+}
+
+/**
+ * Whether a trial counts as a hit, by the level's scoring method (spec §3.6).
+ *
+ * A hybrid level whose transcription did not run — offline, or the upload
+ * failed — falls back to the acoustic verdict rather than failing the trial.
+ * Marking a good attempt wrong because the network was down would teach exactly
+ * the wrong thing.
+ */
+export function trialPassed(outcome: TrialOutcome): boolean {
+  const asr = outcome.asrMatch ?? null;
+  switch (outcome.scoring) {
+    case 'acoustic':
+      return acousticPassed(outcome);
+    case 'hybrid':
+      return acousticPassed(outcome) && asr !== false;
+    case 'asr':
+      return asr === true;
+    case 'baseline':
+      return true;
+  }
 }
 
 /**
@@ -48,6 +77,26 @@ export function feedbackFor(
   exercise?: Exercise,
 ): Feedback {
   const { score, utterance } = outcome;
+
+  // On a transcription-only level there is no gauge to report against.
+  if (outcome.scoring === 'asr') {
+    if (outcome.asrMatch === null || outcome.asrMatch === undefined) {
+      return {
+        result: 'Not scored',
+        coaching: 'The transcription did not come back, so this one could not be judged.',
+        tone: 'none',
+      };
+    }
+    return outcome.asrMatch
+      ? { result: 'Heard correctly', coaching: null, tone: 'good' }
+      : {
+          result: 'Not what was asked for',
+          coaching: outcome.asrText
+            ? `Heard “${outcome.asrText}”. Slow down and hold the placement through the /s/.`
+            : 'Nothing usable came back. Try again a little louder.',
+          tone: 'off',
+        };
+  }
 
   if (!utterance || score.fricativeFrames < DRILL.minFricativeFrames) {
     return {
@@ -70,6 +119,18 @@ export function feedbackFor(
       coaching: outcome.expectVoiced
         ? `That came out as /s/ rather than /z/. Same tongue placement — add the voice, so you can feel the buzz in your throat. ${voicingReading(outcome)}`
         : `That came out voiced, closer to /z/ than /s/. Keep the placement and switch the voice off — /s/ is air only. ${voicingReading(outcome)}`,
+      tone: 'off',
+    };
+  }
+
+  // A word that came out as the wrong word is the headline, whatever the gauge
+  // thought of the placement.
+  if (outcome.asrMatch === false) {
+    return {
+      result,
+      coaching: outcome.asrText
+        ? `The placement scored ${Math.round(score.score)}%, but it was heard as “${outcome.asrText}”. The sound is landing close to a different word.`
+        : 'The placement looked reasonable, but the word was not heard correctly.',
       tone: 'off',
     };
   }

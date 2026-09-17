@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useMicFeatures } from './lib/audio/useMicFeatures';
 import { type Settings, getSettings } from './lib/db';
 import { useRoute } from './lib/router';
+import { Baseline } from './screens/Baseline';
 import { Calibrate } from './screens/Calibrate';
 import { Diagnostic } from './screens/Diagnostic';
 import { Drill } from './screens/Drill';
@@ -25,7 +26,7 @@ export function App() {
 
   // The mic is only ever open on the two screens that use it. Leaving one
   // releases the device, so the OS recording indicator is honest.
-  const needsMic = route === '/drill' || route === '/calibrate';
+  const needsMic = route === '/drill' || route === '/calibrate' || route === '/baseline';
   const { stop } = mic;
   useEffect(() => {
     if (!needsMic) stop();
@@ -50,6 +51,8 @@ export function App() {
       return <History />;
     case '/progress':
       return <Progress />;
+    case '/baseline':
+      return <Baseline mic={mic} />;
     case '/settings':
       return <SettingsScreen settings={settings} onChanged={refresh} />;
     default:

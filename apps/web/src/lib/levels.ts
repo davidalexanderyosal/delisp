@@ -1,5 +1,12 @@
-/** How a level's trials are judged. */
-export type Scoring = 'acoustic' | 'asr' | 'baseline';
+/**
+ * How a level's trials are judged (spec §3.6):
+ *
+ *   acoustic — zone hit rate alone
+ *   hybrid   — zone hit rate *and* the word being transcribed correctly
+ *   asr      — transcription only; no gauge
+ *   baseline — not scored; recorded for comparison over months
+ */
+export type Scoring = 'acoustic' | 'hybrid' | 'asr' | 'baseline';
 
 export interface LevelDef {
   level: number;
@@ -15,9 +22,9 @@ export interface LevelDef {
 }
 
 /**
- * The articulation hierarchy, spec §3.7. Levels 5 and up need word-level
- * transcription to score at all, so they stay locked until the Whisper endpoint
- * exists in Phase 3 — the content is already written and waiting.
+ * The articulation hierarchy, spec §3.7, with the scoring method from §3.6.
+ * Levels 3–5 combine the gauge with a transcription check; 6 and up are judged
+ * on the transcript alone.
  */
 export const LEVELS: readonly LevelDef[] = [
   {
@@ -53,7 +60,7 @@ export const LEVELS: readonly LevelDef[] = [
     instruction: 'Say the word once, and do not let the ending trail off.',
     window: 40,
     advanceAt: 0.85,
-    scoring: 'acoustic',
+    scoring: 'hybrid',
     blockSize: 4,
   },
   {
@@ -62,7 +69,7 @@ export const LEVELS: readonly LevelDef[] = [
     instruction: 'Say the word once. Clusters are the hardest place to hold the groove.',
     window: 50,
     advanceAt: 0.85,
-    scoring: 'acoustic',
+    scoring: 'hybrid',
     blockSize: 3,
   },
   {
@@ -71,7 +78,7 @@ export const LEVELS: readonly LevelDef[] = [
     instruction: 'Say the target word or phrase. Minimal pairs are judged on which word was heard.',
     window: 50,
     advanceAt: 0.85,
-    scoring: 'asr',
+    scoring: 'hybrid',
     blockSize: 2,
   },
   {
@@ -103,21 +110,35 @@ export const LEVELS: readonly LevelDef[] = [
   },
 ];
 
-/** Highest level that can be scored without server-side transcription. */
-export const MAX_ACOUSTIC_LEVEL = 4;
-
 export function levelDef(level: number): LevelDef {
   const found = LEVELS.find((l) => l.level === level);
   if (!found) throw new Error(`no such level: ${level}`);
   return found;
 }
 
-export function isPlayable(level: number): boolean {
-  return level <= MAX_ACOUSTIC_LEVEL;
+/** A level that cannot be scored at all without the transcription endpoint. */
+export function requiresApi(level: number): boolean {
+  const scoring = levelDef(level).scoring;
+  return scoring === 'asr' || scoring === 'baseline';
 }
 
-/** Why a level cannot be started yet, or null when it can. */
-export function blockedReason(level: number): string | null {
-  if (isPlayable(level)) return null;
-  return 'Needs word-level transcription, which arrives with the Phase 3 backend.';
+/**
+ * A hybrid level still works offline — it just falls back to the gauge alone.
+ * Refusing to drill words because the network is down would be the wrong trade
+ * in an app whose whole premise is ten minutes wherever you happen to be.
+ */
+export function degradesOffline(level: number): boolean {
+  return levelDef(level).scoring === 'hybrid';
+}
+
+export function isPlayable(level: number, apiAvailable: boolean): boolean {
+  return apiAvailable || !requiresApi(level);
+}
+
+/** Why a level cannot be started, or null when it can. */
+export function blockedReason(level: number, apiAvailable: boolean): string | null {
+  if (isPlayable(level, apiAvailable)) return null;
+  return levelDef(level).scoring === 'baseline'
+    ? 'Weekly baselines are stored on the server, which is not reachable right now.'
+    : 'This level is scored on what was actually heard, which needs the server. Reconnect, or drill a lower level.';
 }

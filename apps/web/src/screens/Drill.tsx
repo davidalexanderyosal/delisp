@@ -32,7 +32,10 @@ import {
   targetZone,
   unlockNext,
 } from '../lib/db';
-import { exercisesForLevel, sustainedExercise } from '../lib/exercises';
+import { httpClient } from '../lib/api';
+import { type Exercise, exercisesForLevel, sustainedExercise } from '../lib/exercises';
+import { shouldStoreAudio } from '../lib/recording';
+import { useApiStatus } from '../lib/useApiStatus';
 import { type FeedbackPlan, feedbackPlanFor, showScoreOnTrial, summariseBlock } from '../lib/fading';
 import { type TrialOutcome, feedbackFor, trialPassed } from '../lib/feedback';
 import { blockedReason, levelDef } from '../lib/levels';
@@ -55,11 +58,25 @@ import {
 } from '../lib/progression';
 import { navigate } from '../lib/router';
 
+/** "2nd", "3rd" — the fading schedule reads badly as a bare number. */
+function ordinal(n: number): string {
+  const suffix = n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
+  return `${n}${suffix}`;
+}
+
 type Phase = 'arming' | 'loading' | 'ready' | 'rate' | 'result';
 
 interface Attempt extends TrialOutcome {
   durationMs: number;
 }
+
+interface RemoteScore {
+  asrMatch: boolean | null;
+  asrText: string | null;
+  key: string | null;
+}
+
+const NO_REMOTE: RemoteScore = { asrMatch: null, asrText: null, key: null };
 
 export function Drill({ mic, settings }: { mic: MicController; settings: Settings }) {
   const [phase, setPhase] = useState<Phase>('arming');
@@ -72,8 +89,18 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
   const [advanced, setAdvanced] = useState<number | null>(null);
   const [blockOutcomes, setBlockOutcomes] = useState<boolean[]>([]);
   const [showScore, setShowScore] = useState(true);
+  /**
+   * The schedule in force when this trial was judged. Committing a trial changes
+   * the rolling accuracy, and therefore the schedule — reading the live plan on
+   * the result screen would describe a rule that was not the one applied.
+   */
+  const [appliedPlan, setAppliedPlan] = useState<FeedbackPlan | null>(null);
+  const [checking, setChecking] = useState(false);
   const sessionId = useRef<string | null>(null);
   const retestOutcomes = useRef(new Map<number, boolean[]>());
+  const pendingScore = useRef<Promise<RemoteScore> | null>(null);
+  const storedThisSession = useRef(0);
+  const api = useApiStatus();
 
   const zone = useMemo(() => targetZone(settings), [settings]);
   const gate = useMemo(
@@ -135,13 +162,44 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
     [],
   );
 
+  /**
+   * Uploads the clip and, on a level that needs it, asks the Worker what was
+   * heard. Runs in the background while the user self-rates, so the round trip
+   * costs nothing — and fails soft: no clip, no network, or a rejected upload
+   * all return "not scored" rather than failing the trial.
+   */
+  const uploadAndScore = useCallback(
+    async (exercise: Exercise, durationMs: number, wantsAsr: boolean): Promise<RemoteScore> => {
+      const blob = await mic.takeRecording();
+      if (!blob || !api.available) return NO_REMOTE;
+      try {
+        const client = httpClient();
+        const key = await client.postRecording('trial', newId('rec'), blob, durationMs);
+        storedThisSession.current += 1;
+        if (!wantsAsr) return { ...NO_REMOTE, key };
+        const result = await client.scoreAsr({
+          key,
+          target: exercise.text,
+          minimalPair: exercise.minimalPair ?? null,
+        });
+        return { asrMatch: result.match, asrText: result.text, key };
+      } catch {
+        return NO_REMOTE;
+      }
+    },
+    [mic, api.available],
+  );
+
   const onStop = useCallback(
     (durationMs: number) => {
       const frames = mic.endCapture();
       if (durationMs < DRILL.minRecordMs) {
+        void mic.takeRecording();
         setNote('Too short — hold the button while you make the sound.');
         return;
       }
+      const exercise = current?.exercise;
+      const scoring = exercise ? levelDef(exercise.level).scoring : 'acoustic';
       const utterance = aggregateUtterance(frames, { hopMs, gate });
       const score = scoreUtterance(frames, zone, gate);
       setNote(null);
@@ -149,13 +207,19 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
         score,
         utterance,
         voicing: voicingRate(frames, voicingCfg),
-        expectVoiced: current?.exercise.sound === 'z',
+        expectVoiced: exercise?.sound === 'z',
+        scoring,
+        asrMatch: null,
+        asrText: null,
         durationMs,
       });
+      if (exercise) {
+        pendingScore.current = uploadAndScore(exercise, durationMs, scoring !== 'acoustic');
+      }
       setRating(null);
       setPhase('rate');
     },
-    [mic, hopMs, gate, zone, voicingCfg, current],
+    [mic, hopMs, gate, zone, voicingCfg, current, uploadAndScore],
   );
 
   /** Applies the spec §3.7 rule once a re-test block for a level is complete. */
@@ -185,7 +249,17 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
     async (selfRating: Rating) => {
       if (!attempt || !sessionId.current || !current || !row) return;
       setRating(selfRating);
-      const passed = trialPassed(attempt);
+
+      // The upload and transcription overlapped with the rating; collect it now.
+      setChecking(pendingScore.current !== null);
+      const remote = pendingScore.current ? await pendingScore.current : NO_REMOTE;
+      pendingScore.current = null;
+      setChecking(false);
+
+      const finished: Attempt = { ...attempt, asrMatch: remote.asrMatch, asrText: remote.asrText };
+      setAttempt(finished);
+
+      const passed = trialPassed(finished);
       const trialLevel = current.exercise.level;
 
       const trial: TrialRow = {
@@ -194,21 +268,24 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
         exerciseId: current.exercise.id,
         level: trialLevel,
         createdAt: new Date().toISOString(),
-        centroid: attempt.utterance?.medianCentroid ?? 0,
-        bandRatio: attempt.utterance?.meanBandRatio ?? 0,
-        spread: attempt.utterance?.meanSpread ?? 0,
-        sDurationMs: attempt.utterance?.sDurationMs ?? 0,
-        fricativeFrames: attempt.score.fricativeFrames,
-        acousticScore: attempt.score.score,
+        centroid: finished.utterance?.medianCentroid ?? 0,
+        bandRatio: finished.utterance?.meanBandRatio ?? 0,
+        spread: finished.utterance?.meanSpread ?? 0,
+        sDurationMs: finished.utterance?.sDurationMs ?? 0,
+        fricativeFrames: finished.score.fricativeFrames,
+        acousticScore: finished.score.score,
         selfRating,
-        score: attempt.score.score,
+        score: finished.score.score,
         passed: passed ? 1 : 0,
         feedbackShown: showScoreOnTrial(feedback, cursor) ? 1 : 0,
         deviceLabel: mic.state.deviceLabel,
         synced: 0,
         practice: plan?.practice,
         kind: current.kind,
-        voicing: attempt.voicing,
+        voicing: finished.voicing,
+        asrText: remote.asrText,
+        asrMatch: remote.asrMatch === null ? null : remote.asrMatch ? 1 : 0,
+        recordingKey: remote.key,
       };
       await addTrial(trial);
 
@@ -234,9 +311,21 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
 
       setBlockOutcomes((prev) => [...prev, passed]);
       setShowScore(showScoreOnTrial(feedback, cursor));
+      setAppliedPlan(feedback);
       setPhase('result');
     },
-    [attempt, current, row, def, level, cursor, feedback, plan, settleRetest, mic.state.deviceLabel],
+    [
+      attempt,
+      current,
+      row,
+      def,
+      level,
+      cursor,
+      feedback,
+      plan,
+      settleRetest,
+      mic.state.deviceLabel,
+    ],
   );
 
   // Keep the stored feedback rate in step with the schedule, for Phase 3 sync.
@@ -296,16 +385,17 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
     );
   }
 
-  const locked = blockedReason(level);
+  const locked = blockedReason(level, api.available);
   if (locked) {
     return (
       <ScreenShell title={`Level ${level} · ${def.title}`} back="/">
         <Banner tone="info">{locked}</Banner>
         <Card>
           <p className="text-sm leading-relaxed text-slate-400">
-            Levels 0–4 are scored acoustically, right here on the phone. From level 5 the score
-            depends on which word was actually heard, which needs the transcription endpoint. The
-            content is already written and waiting.
+            Levels 0–2 are scored by the gauge alone, right here on the phone. Levels 3–5 add a
+            check on which word was actually heard, and fall back to the gauge when the server is
+            out of reach. From level 6 the transcript is the whole score, so there is nothing to
+            fall back to.
           </p>
         </Card>
         <Button onClick={() => navigate('/')}>Back to home</Button>
@@ -315,6 +405,17 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
 
   const cues = cuesFor(settings.lispPattern);
   const block = summariseBlock(blockOutcomes);
+  const trialScoring = levelDef(current.exercise.level).scoring;
+  // Keep the clip when the level is judged on it, or when the sampling policy
+  // in spec §4 wants this one for the record.
+  const recordThisTrial =
+    api.available &&
+    (trialScoring !== 'acoustic' ||
+      shouldStoreAudio({
+        trialIndex: cursor,
+        passed: true,
+        storedThisSession: storedThisSession.current,
+      }));
 
   return (
     <ScreenShell title={`Level ${level} · ${def.title}`} back="/">
@@ -374,7 +475,7 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
             </p>
           ) : null}
           <RecordButton
-            onStart={mic.beginCapture}
+            onStart={() => mic.beginCapture(recordThisTrial)}
             onStop={onStop}
             disabled={mic.state.status !== 'running'}
             label={current.exercise.position === 'isolation' ? 'Hold and say “ssss”' : 'Hold and say it'}
@@ -398,7 +499,15 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
         </>
       ) : null}
 
-      {phase === 'rate' ? <SelfRating onRate={(r) => void commit(r)} /> : null}
+      {phase === 'rate' ? (
+        checking ? (
+          <Card>
+            <p className="text-sm text-slate-400">Checking what was heard…</p>
+          </Card>
+        ) : (
+          <SelfRating onRate={(r) => void commit(r)} />
+        )
+      ) : null}
 
       {phase === 'result' && outcome ? (
         <>
@@ -429,9 +538,18 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
               <>
                 <p className="text-2xl font-semibold tracking-tight text-slate-300">Recorded</p>
                 <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                  Scores are shown every {feedback.scoreEvery} trials now, with a summary after each
-                  block. Trust what the sound felt like.
+                  {appliedPlan && appliedPlan.scoreEvery > 1
+                    ? `You are accurate enough that scores now come every ${ordinal(
+                        appliedPlan.scoreEvery,
+                      )} trial, with a summary after each block. Trust what the sound felt like.`
+                    : 'Logged. Trust what the sound felt like.'}
                 </p>
+                {block.trials > 1 ? (
+                  <p className="mt-3 text-xs text-slate-500">
+                    Last {block.trials} trials: {block.passed} in zone (
+                    {formatPercent(block.accuracy)}).
+                  </p>
+                ) : null}
               </>
             )}
             {rating && showScore && outcome.tone !== 'none' ? (

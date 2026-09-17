@@ -5,6 +5,7 @@ import { ScreenShell } from '../components/ScreenShell';
 import { type Settings, allProgression, isCalibrated, targetZone } from '../lib/db';
 import { patternLabel } from '../lib/diagnostic';
 import { LEVELS, blockedReason, levelDef } from '../lib/levels';
+import { useApiStatus } from '../lib/useApiStatus';
 import { formatHz, formatPercent } from '../lib/progress';
 import {
   type ProgressionRow,
@@ -16,6 +17,7 @@ import { navigate } from '../lib/router';
 
 export function Home({ settings }: { settings: Settings }) {
   const [rows, setRows] = useState<ProgressionRow[] | null>(null);
+  const api = useApiStatus();
 
   useEffect(() => {
     void allProgression().then(setRows);
@@ -95,6 +97,11 @@ export function Home({ settings }: { settings: Settings }) {
         <Button variant="secondary" onClick={() => navigate('/progress')}>
           Progress
         </Button>
+        {api.available ? (
+          <Button variant="secondary" onClick={() => navigate('/baseline')}>
+            Weekly baseline
+          </Button>
+        ) : null}
         <Button variant="secondary" onClick={() => navigate('/history')}>
           History
         </Button>
@@ -106,7 +113,7 @@ export function Home({ settings }: { settings: Settings }) {
           {LEVELS.map((def) => {
             const progress = rows?.find((r) => r.level === def.level);
             const status = progress?.status ?? 'locked';
-            const blocked = blockedReason(def.level);
+            const blocked = blockedReason(def.level, api.available);
             return (
               <li key={def.level} className="flex items-center gap-3 text-sm">
                 <span
@@ -124,7 +131,7 @@ export function Home({ settings }: { settings: Settings }) {
                   {def.title}
                 </span>
                 {blocked ? (
-                  <span className="ml-auto shrink-0 text-xs text-slate-600">Phase 3</span>
+                  <span className="ml-auto shrink-0 text-xs text-slate-600">needs server</span>
                 ) : status === 'passed' ? (
                   <span className="ml-auto shrink-0 text-xs text-emerald-500">passed</span>
                 ) : null}

@@ -66,7 +66,7 @@ export function Gauge({ zone, latest, gate, value, blind = false }: GaugeProps) 
     const apply = (v: GaugeValue | null) => {
       if (blind || !v) {
         needle.style.opacity = '0';
-        readout.textContent = blind ? '••••' : '—';
+        readout.textContent = blind ? 'hidden' : '—';
         readout.dataset.tone = 'idle';
         ratio.style.width = '0%';
         return;

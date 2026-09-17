@@ -82,6 +82,9 @@ function harness({
     putProgression: async () => void order.push('progression'),
     postDiagnostic: async () => undefined,
     postRecording: async () => 'key',
+    postBaseline: async () => ({ key: 'key', transcript: null, wpm: null, durationMs: null }),
+    baselines: async () => [],
+    recordingUrl: (key: string) => `/api/recordings/${key}`,
     scoreAsr: async () => ({ text: '', match: false, reason: 'exact', substitutions: [] }),
     progress: async () => ({ perLevel: [], sessions: [], selfRating: { rated: 0, agreed: 0 } }),
   };
