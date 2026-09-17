@@ -29,3 +29,7 @@ ACCESS_AUD = ""
 
 [observability]
 enabled = true
+
+# Nightly retention sweep: trial audio older than 90 days (spec §4).
+[triggers]
+crons = ["0 3 * * *"]

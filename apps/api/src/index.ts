@@ -5,12 +5,20 @@ import {
   diagnostics,
   exercises,
   progression,
+  recordings,
   sessions,
   settings,
   trials,
 } from '@delisp/schema';
 import { AccessError, type AccessIdentity, verifyAccessJwt } from './access';
+import { type AiLike, workersAiTranscriber } from './asr';
 import type { Env } from './env';
+import { matchTranscript, wordsPerMinute } from './match';
+import {
+  type RecordingKind,
+  purgeExpiredTrialAudio,
+  storeRecording,
+} from './recordings';
 
 type Variables = { identity: AccessIdentity | null };
 
@@ -277,6 +285,148 @@ app.get('/api/progress', async (c) => {
   });
 });
 
+/* -------------------------------------------------------------- recordings */
+
+const KINDS = new Set<RecordingKind>(['trial', 'baseline', 'calibration']);
+/** Comfortably above a 60-second clip, comfortably below the Worker's limit. */
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Audio is streamed through the Worker rather than PUT directly to R2 with a
+ * presigned URL (spec §9's first open question). Presigning from a Worker means
+ * implementing SigV4 by hand and publishing a CORS policy on the bucket; the
+ * clips here are seconds long, so the simpler path costs nothing that matters.
+ */
+app.post('/api/recordings', async (c) => {
+  const kind = (c.req.query('kind') ?? 'trial') as RecordingKind;
+  const id = c.req.query('id');
+  if (!KINDS.has(kind)) return c.json({ error: `unknown kind: ${kind}` }, 400);
+  if (!id) return c.json({ error: 'id is required' }, 400);
+
+  const body = await c.req.arrayBuffer();
+  if (body.byteLength === 0) return c.json({ error: 'empty body' }, 400);
+  if (body.byteLength > MAX_AUDIO_BYTES) return c.json({ error: 'recording too large' }, 413);
+
+  const durationMs = Number(c.req.query('durationMs'));
+  const key = await storeRecording(c.env, {
+    kind,
+    id,
+    mime: c.req.header('Content-Type') ?? 'application/octet-stream',
+    durationMs: Number.isFinite(durationMs) ? durationMs : null,
+    body,
+  });
+  return c.json({ key }, 201);
+});
+
+app.get('/api/recordings/:key{.+}', async (c) => {
+  const object = await c.env.AUDIO.get(c.req.param('key'));
+  if (!object) return c.json({ error: 'not found' }, 404);
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('etag', object.httpEtag);
+  return new Response(object.body, { headers });
+});
+
+/* ----------------------------------------------------------------- scoring */
+
+/**
+ * Transcribes a stored clip and reports whether the target survived (spec §5).
+ * Used from level 5 up, and by the diagnostic's minimal-pair test.
+ */
+app.post('/api/score/asr', async (c) => {
+  const body = (await c.req.json()) as Record<string, unknown>;
+  const key = str(body.key);
+  const target = str(body.target);
+  if (!key || !target) return c.json({ error: 'key and target are required' }, 400);
+
+  const object = await c.env.AUDIO.get(key);
+  if (!object) return c.json({ error: `no recording at ${key}` }, 404);
+
+  const minimalPair = str(body.minimalPair);
+  const transcriber = workersAiTranscriber(c.env.AI as unknown as AiLike);
+  const audio = new Uint8Array(await object.arrayBuffer());
+
+  // Bias recognition toward what was asked for and its contrast, so the model is
+  // choosing between the two words the drill is actually about.
+  const vocabulary = minimalPair ? [target, minimalPair] : [target];
+
+  let transcription;
+  try {
+    transcription = await transcriber.transcribe(audio, { vocabulary });
+  } catch (err) {
+    console.error(err);
+    return c.json({ error: 'transcription failed' }, 502);
+  }
+
+  const result = matchTranscript(transcription.text, target, { minimalPair });
+
+  const trialId = str(body.trialId);
+  if (trialId) {
+    await db(c.env)
+      .update(trials)
+      .set({ asrText: result.heard, asrMatch: result.match ? 1 : 0, recordingKey: key })
+      .where(eq(trials.id, trialId));
+  }
+
+  return c.json({
+    text: transcription.text,
+    match: result.match,
+    reason: result.reason,
+    substitutions: result.substitutions,
+  });
+});
+
+/* ---------------------------------------------------------------- baseline */
+
+/**
+ * Weekly free-speech baseline (spec §3.10): stored forever, transcribed, and
+ * measured for rate. This is the recording that makes months of work audible.
+ */
+app.post('/api/baseline', async (c) => {
+  const id = c.req.query('id');
+  if (!id) return c.json({ error: 'id is required' }, 400);
+
+  const body = await c.req.arrayBuffer();
+  if (body.byteLength === 0) return c.json({ error: 'empty body' }, 400);
+  if (body.byteLength > MAX_AUDIO_BYTES) return c.json({ error: 'recording too large' }, 413);
+
+  const durationMs = Number(c.req.query('durationMs'));
+  const duration = Number.isFinite(durationMs) ? durationMs : null;
+
+  const key = await storeRecording(c.env, {
+    kind: 'baseline',
+    id,
+    mime: c.req.header('Content-Type') ?? 'application/octet-stream',
+    durationMs: duration,
+    body,
+  });
+
+  // The clip is safe in R2 before anything is transcribed: a Workers AI outage
+  // must not lose a baseline that cannot be recorded again.
+  let transcript: string | null = null;
+  let wpm: number | null = null;
+  try {
+    const transcriber = workersAiTranscriber(c.env.AI as unknown as AiLike);
+    const result = await transcriber.transcribe(new Uint8Array(body));
+    transcript = result.text;
+    wpm = duration ? wordsPerMinute(result.text, duration) : null;
+    await db(c.env).update(recordings).set({ transcript, wpm }).where(eq(recordings.key, key));
+  } catch (err) {
+    console.error(err);
+  }
+
+  return c.json({ key, transcript, wpm, durationMs: duration }, 201);
+});
+
+app.get('/api/baselines', async (c) => {
+  const rows = await db(c.env)
+    .select()
+    .from(recordings)
+    .where(eq(recordings.kind, 'baseline'))
+    .orderBy(desc(recordings.createdAt));
+  return c.json(rows);
+});
+
 /* --------------------------------------------------------- not yet built */
 
 app.post('/api/score/phoneme', (c) =>
@@ -304,4 +454,19 @@ function bool(value: unknown): number | null {
   return null;
 }
 
-export default app;
+export default {
+  fetch: app.fetch,
+  /**
+   * Retention sweep (spec §4). Scheduled rather than done inline so deleting a
+   * thousand expired objects never sits in front of a user's request.
+   */
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      purgeExpiredTrialAudio(env).then((result) => {
+        if (result.deleted > 0) console.log(`purged ${result.deleted} expired trial recordings`);
+      }),
+    );
+  },
+};
+
+export { app };

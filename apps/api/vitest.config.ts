@@ -21,6 +21,9 @@ export default defineWorkersConfig({
     poolOptions: {
       workers: {
         singleWorker: true,
+        // Per-test storage isolation cannot unwind the R2 bucket's backing
+        // store here, so it is off and each suite clears what it wrote.
+        isolatedStorage: false,
         miniflare: {
           compatibilityDate: '2024-12-18',
           compatibilityFlags: ['nodejs_compat'],

@@ -210,3 +210,48 @@ both the Worker and the test runner.
 emits an upsert file from the same YAML the web app compiles from, so the
 curriculum has exactly one source of truth and seeding is a reviewable artifact
 rather than an opaque command.
+
+**Audio streams through the Worker, not a presigned PUT.** Spec §9's first open
+question. Presigning R2 from a Worker means implementing SigV4 by hand and
+publishing a CORS policy on the bucket; the clips are seconds long and well
+inside the Worker request limit, so the simpler path costs nothing that matters.
+
+**A baseline is stored before it is transcribed.** A weekly free-speech baseline
+cannot be recorded again — losing one to a Workers AI outage would be the worst
+failure this app has. The upload succeeds and returns 201 with a null transcript
+if transcription fails; the clip is safe in R2 either way.
+
+**The transcript matcher consults the declared minimal pair first.** The
+sibilant skeleton works on spelling, so it catches sink/think, pass/path and
+mouse/mouth but not sue/shoe or seat/sheet, where the vowel is spelled
+differently. Those are exactly the pairs the content already declares, so the
+certain check runs before the inferred one. A CMUdict phoneme comparison is the
+upgrade and belongs with the Phase 4 phoneme work.
+
+**`carriesS` is separate from `hasSibilant`.** The skeleton deliberately
+collapses θ and ʃ because those are the *error* forms — but that means a word
+like "with" looks sibilant-bearing. Dropping "with" is a missed word, not a
+lisp, so the "was an /s/ lost" test ignores the th/sh digraphs. Caught by a test
+that expected a dropped "with" to read as a different word and got a
+substitution.
+
+**Word sequences are aligned before being compared.** A single dropped word would
+otherwise shift every later comparison and report a whole sentence as substituted.
+A sibilant-only difference is a zero-cost match during alignment, since that is
+the error being looked for rather than evidence the words do not correspond.
+
+**Whisper's response is parsed defensively.** The shape has changed across model
+versions; anything unrecognisable becomes an empty transcript, which the matcher
+reports as `nothing-heard` — a wrong answer the user can act on rather than a
+crash. Spec §9's second open question — whether `@cf/openai/whisper` is accurate
+enough on 2–3 second clips — cannot be answered until this runs against real
+Workers AI, so the vocabulary-biased prompt is sent from the start.
+
+**Retention runs on a cron, not inline.** Deleting a thousand expired objects
+must never sit in front of a user's request. The R2 delete happens before the
+row delete: an object with no row is invisible and would never be cleaned up,
+whereas a row with no object is noticed the next time anything reads it.
+
+**Per-test storage isolation is off in the API tests.** The pool's isolation
+cannot unwind the R2 bucket's backing store in this environment; each suite
+clears what it wrote instead.
