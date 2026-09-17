@@ -324,3 +324,28 @@ for an answer that does not change that fast.
 Spec §4's "every 5th trial plus all failed trials, capped at 20/session" governs
 the archive; a level scored by transcription has no score at all without its
 clip, so it bypasses the sampling but still respects the cap.
+
+## Phase 4
+
+**Contrast sets are built from the substitution log, not a fixed list.** That is
+what makes it HVPT rather than more minimal-pair drilling: the contrasts are the
+ones this speaker actually fails. `asrSubstitutions` stores the structured log on
+each trial, and the screen ranks pairs by frequency with recency breaking ties.
+
+**Only the production half of HVPT is built.** The listening half — the same
+contrast from several different voices — needs model audio, which is a TTS asset
+job that has not run. The screen says so rather than implying the full protocol.
+
+**A pair needs two misses before it earns a drill.** One mishearing is Whisper,
+not a pattern. A dropped word is excluded entirely: there is no contrast to train
+against, only a word that was not said.
+
+**The contrast list falls back to the curriculum's own pairs** when nothing has
+been misheard yet, so the screen is never empty for someone who has not reached
+level 5.
+
+**The rate band is 110–160 wpm, and being under it is also reported.** The spec
+says "a band, not a maximum". Rushing is where a lisp reappears first, but
+slowing down to place every /s/ deliberately produces careful speech that does
+not transfer to conversation — so both ends are called out. Anything under ten
+seconds is refused rather than extrapolated.

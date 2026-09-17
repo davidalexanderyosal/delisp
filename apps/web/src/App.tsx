@@ -4,6 +4,7 @@ import { type Settings, getSettings } from './lib/db';
 import { useRoute } from './lib/router';
 import { Baseline } from './screens/Baseline';
 import { Calibrate } from './screens/Calibrate';
+import { Contrasts } from './screens/Contrasts';
 import { Diagnostic } from './screens/Diagnostic';
 import { Drill } from './screens/Drill';
 import { History } from './screens/History';
@@ -26,7 +27,11 @@ export function App() {
 
   // The mic is only ever open on the two screens that use it. Leaving one
   // releases the device, so the OS recording indicator is honest.
-  const needsMic = route === '/drill' || route === '/calibrate' || route === '/baseline';
+  const needsMic =
+    route === '/drill' ||
+    route === '/calibrate' ||
+    route === '/baseline' ||
+    route === '/contrasts';
   const { stop } = mic;
   useEffect(() => {
     if (!needsMic) stop();
@@ -53,6 +58,8 @@ export function App() {
       return <Progress />;
     case '/baseline':
       return <Baseline mic={mic} />;
+    case '/contrasts':
+      return <Contrasts mic={mic} />;
     case '/settings':
       return <SettingsScreen settings={settings} onChanged={refresh} />;
     default:

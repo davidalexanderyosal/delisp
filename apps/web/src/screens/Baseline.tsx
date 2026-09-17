@@ -6,6 +6,7 @@ import { type BaselineRow, httpClient } from '../lib/api';
 import { newId } from '../lib/db';
 import { exercisesForLevel } from '../lib/exercises';
 import { formatDate } from '../lib/progress';
+import { DEFAULT_RATE_BAND, describeRate, readRate } from '../lib/rate';
 import { useApiStatus } from '../lib/useApiStatus';
 
 /** Spec §3.10: sixty seconds of free speech, once a week, kept forever. */
@@ -19,7 +20,11 @@ export function Baseline({ mic }: { mic: MicController }) {
   const [prompt, setPrompt] = useState(() => pickPrompt());
   const [elapsed, setElapsed] = useState(0);
   const [rows, setRows] = useState<BaselineRow[] | null>(null);
-  const [result, setResult] = useState<{ transcript: string | null; wpm: number | null } | null>(null);
+  const [result, setResult] = useState<{
+    transcript: string | null;
+    wpm: number | null;
+    durationMs: number | null;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const startedAt = useRef(0);
   const timer = useRef<number | null>(null);
@@ -63,7 +68,11 @@ export function Baseline({ mic }: { mic: MicController }) {
     }
     try {
       const response = await client.postBaseline(newId('base'), blob, durationMs);
-      setResult({ transcript: response.transcript, wpm: response.wpm });
+      setResult({
+        transcript: response.transcript,
+        wpm: response.wpm,
+        durationMs: response.durationMs ?? durationMs,
+      });
       setPhase('done');
       await refresh();
     } catch (err) {
@@ -154,10 +163,17 @@ export function Baseline({ mic }: { mic: MicController }) {
             <Stat
               label="Rate"
               value={result.wpm === null ? '—' : Math.round(result.wpm)}
-              hint="words per minute"
+              hint={`target ${DEFAULT_RATE_BAND.min}–${DEFAULT_RATE_BAND.max} wpm`}
             />
             <Stat label="Saved" value="Yes" hint="kept forever" />
           </div>
+          <Banner
+            tone={
+              readRate(result.transcript, result.durationMs).verdict === 'in-band' ? 'info' : 'warn'
+            }
+          >
+            {describeRate(readRate(result.transcript, result.durationMs))}
+          </Banner>
           {result.transcript ? (
             <Card>
               <p className="text-xs uppercase tracking-wide text-slate-500">Transcript</p>

@@ -23,8 +23,10 @@ was heard, 6–7 by the transcript alone, 8 an unscored baseline. Levels 0–5 w
 with no server at all — the hybrid levels simply fall back to the gauge — so the
 app is fully usable offline. Levels 6–8 need the Worker deployed.
 
-Phases 4 (shadowing, HVPT, phoneme GOP) and 5 (streaks, reminders, export) are
-not started.
+**Phase 4 is partly done.** HVPT-style contrast drilling built from your own
+substitution log, and the speaking-rate band on baselines. Still to come:
+shadowing (which needs model audio) and per-phoneme GOP scoring (which needs a
+Cloudflare Container). Phase 5 — streaks, reminders, export — is not started.
 
 ## Layout
 

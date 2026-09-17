@@ -98,9 +98,14 @@ export function Home({ settings }: { settings: Settings }) {
           Progress
         </Button>
         {api.available ? (
-          <Button variant="secondary" onClick={() => navigate('/baseline')}>
-            Weekly baseline
-          </Button>
+          <>
+            <Button variant="secondary" onClick={() => navigate('/contrasts')}>
+              Contrast drill
+            </Button>
+            <Button variant="secondary" onClick={() => navigate('/baseline')}>
+              Weekly baseline
+            </Button>
+          </>
         ) : null}
         <Button variant="secondary" onClick={() => navigate('/history')}>
           History

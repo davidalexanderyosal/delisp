@@ -74,9 +74,16 @@ interface RemoteScore {
   asrMatch: boolean | null;
   asrText: string | null;
   key: string | null;
+  /** Serialised substitution log, the input to the Phase 4 contrast sets. */
+  substitutions: string | null;
 }
 
-const NO_REMOTE: RemoteScore = { asrMatch: null, asrText: null, key: null };
+const NO_REMOTE: RemoteScore = {
+  asrMatch: null,
+  asrText: null,
+  key: null,
+  substitutions: null,
+};
 
 export function Drill({ mic, settings }: { mic: MicController; settings: Settings }) {
   const [phase, setPhase] = useState<Phase>('arming');
@@ -182,7 +189,13 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
           target: exercise.text,
           minimalPair: exercise.minimalPair ?? null,
         });
-        return { asrMatch: result.match, asrText: result.text, key };
+        return {
+          asrMatch: result.match,
+          asrText: result.text,
+          key,
+          substitutions:
+            result.substitutions.length > 0 ? JSON.stringify(result.substitutions) : null,
+        };
       } catch {
         return NO_REMOTE;
       }
@@ -286,6 +299,7 @@ export function Drill({ mic, settings }: { mic: MicController; settings: Setting
         asrText: remote.asrText,
         asrMatch: remote.asrMatch === null ? null : remote.asrMatch ? 1 : 0,
         recordingKey: remote.key,
+        asrSubstitutions: remote.substitutions,
       };
       await addTrial(trial);
 

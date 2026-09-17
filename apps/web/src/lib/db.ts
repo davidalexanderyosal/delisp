@@ -71,6 +71,8 @@ export interface TrialRow {
   asrMatch?: 0 | 1 | null;
   /** R2 key, when the clip was kept (spec §4 retention). */
   recordingKey?: string | null;
+  /** JSON array of {expected, heard, position} — the substitution log (spec §3.9). */
+  asrSubstitutions?: string | null;
 }
 
 export interface CalibrationRep {
